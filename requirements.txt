@@ -6,4 +6,3 @@ xarray
 cfgrib
 eccodes
 scipy
-zoneinfo
