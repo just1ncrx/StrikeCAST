@@ -7,6 +7,7 @@ import json
 import os
 import re
 import sys
+import glob
 import pandas as pd
 import numpy as np
 from pyproj import Proj, Transformer
@@ -15,11 +16,12 @@ from zoneinfo import ZoneInfo
 # -------------------------------
 # Konfiguration
 # -------------------------------
-WORK_DIR = "warnmos_data"
-CHUNK    = 16
-NX, NY   = 900, 900
-DX, DY   = 1000.0, 1000.0
-os.makedirs(WORK_DIR, exist_ok=True)
+INPUT_DIR  = "data/warnmos"
+OUTPUT_DIR = "warnmos"
+CHUNK      = 16
+NX, NY     = 900, 900
+DX, DY     = 1000.0, 1000.0
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # -------------------------------
 # Raster-Koordinaten berechnen
@@ -55,7 +57,8 @@ def inspect_grib(grib_file):
 # OM-File + IDX bauen
 # -------------------------------
 def build_om(grib_file, short_name="W_GEW_01"):
-    om_file  = grib_file.replace(".grb2", ".om")
+    basename = os.path.splitext(os.path.basename(grib_file))[0]
+    om_file  = os.path.join(OUTPUT_DIR, basename + ".om")
     idx_file = om_file + ".idx"
 
     print(f"Reading GRIB: {grib_file}")
@@ -183,26 +186,18 @@ def build_om(grib_file, short_name="W_GEW_01"):
 # Main
 # -------------------------------
 if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print("Usage: python build_warnmos_short.py <grib_file>")
-        print("Beispiel: python build_warnmos_short.py warnmos_data/WarnMOS202603142200.grb2")
+    files = sorted(glob.glob(os.path.join(INPUT_DIR, "*.grb2")))
+
+    if not files:
+        print(f"Keine .grb2 Dateien in {INPUT_DIR} gefunden!")
         sys.exit(1)
 
-    grib_input = sys.argv[1]
+    print(f"Gefunden: {len(files)} Datei(en) in {INPUT_DIR}")
+    for grib_file in files:
+        print(f"\n{'='*60}")
+        print(f"Verarbeite: {grib_file}")
+        print('='*60)
+        inspect_grib(grib_file)
+        build_om(grib_file)
 
-    # Falls .bz2 übergeben wurde → entpacken
-    if grib_input.endswith(".bz2"):
-        grib_unpacked = grib_input.replace(".bz2", "")
-        if not os.path.exists(grib_unpacked):
-            print("Entpacke .bz2 ...")
-            with bz2.BZ2File(grib_input) as f_in, open(grib_unpacked, "wb") as f_out:
-                shutil.copyfileobj(f_in, f_out)
-        grib_input = grib_unpacked
-
-    if not os.path.exists(grib_input):
-        print(f"Datei nicht gefunden: {grib_input}")
-        sys.exit(1)
-
-    inspect_grib(grib_input)
-    build_om(grib_input)
     print("\nFertig!")
