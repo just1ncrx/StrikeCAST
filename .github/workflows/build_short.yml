@@ -81,6 +81,9 @@ jobs:
           name: warnmos-om-short
           path: warnmos/
 
+      - name: build metadata
+        run: python scripts/build_metadata.py
+
       - name: Clean old runs on R2
         run: |
           for run_folder in $(aws s3 ls s3://${{ secrets.R2_BUCKET }}/warnmos/ \
@@ -98,6 +101,11 @@ jobs:
       - name: Upload OM + IDX to R2
         run: |
           aws s3 sync ./warnmos/ s3://${{ secrets.R2_BUCKET }}/warnmos/${{ needs.fetch_and_build.outputs.run }}/ \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+      - name: Upload Metadata to R2
+        run: |
+          aws s3 cp ./warnmos/metadata.json s3://${{ secrets.R2_BUCKET }}/warnmos/metadata.json \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
         env:
           AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
