@@ -1,4 +1,4 @@
-name: Fetch WarnMOS Short and Build OM
+name: Fetch WarnMOS Long and Build OM
 
 on:
   workflow_dispatch:
