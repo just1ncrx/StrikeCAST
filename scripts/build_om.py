@@ -1,4 +1,3 @@
-import requests
 import bz2
 import shutil
 import xarray as xr
@@ -7,11 +6,11 @@ import zlib
 import json
 import os
 import re
+import sys
 import pandas as pd
 import numpy as np
 from pyproj import Proj, Transformer
 from zoneinfo import ZoneInfo
-from datetime import datetime
 
 # -------------------------------
 # Konfiguration
@@ -22,62 +21,15 @@ NX, NY   = 900, 900
 DX, DY   = 1000.0, 1000.0
 os.makedirs(WORK_DIR, exist_ok=True)
 
-# DWD Base URL
-DWD_BASE = "https://opendata.dwd.de/weather/local_forecasts/warnmos/"
-
-def latest_filename(prefix="WarnMOS"):
-    """
-    Gibt den neuesten Dateinamen vom DWD-Server zurück.
-    Parsed das Directory-Listing nach .grb2.bz2 Dateien mit dem gegebenen Prefix.
-    """
-    import re as _re
-    res = requests.get(DWD_BASE)
-    res.raise_for_status()
-    pattern = _re.compile(rf'href="({prefix}\d{{12}}\.grb2\.bz2)"')
-    matches = pattern.findall(res.text)
-    if not matches:
-        raise FileNotFoundError(f"Keine Datei mit Prefix '{prefix}' auf DWD gefunden.")
-    # Neueste = alphabetisch letzte (Timestamp im Dateinamen)
-    return sorted(matches)[-1]
-
 # -------------------------------
-# 1️⃣ Download + Entpacken
-# -------------------------------
-def download_and_unpack(url):
-    bz2_file  = os.path.join(WORK_DIR, url.split("/")[-1])
-    grib_file = bz2_file.replace(".bz2", "")
-
-    if not os.path.exists(bz2_file):
-        print(f"Downloading {url} ...")
-        r = requests.get(url, stream=True)
-        r.raise_for_status()
-        with open(bz2_file, "wb") as f:
-            for chunk in r.iter_content(1024 * 1024):
-                f.write(chunk)
-        print("Downloaded:", bz2_file)
-    else:
-        print("Already downloaded:", bz2_file)
-
-    if not os.path.exists(grib_file):
-        print("Unpacking GRIB...")
-        with bz2.BZ2File(bz2_file) as f_in, open(grib_file, "wb") as f_out:
-            shutil.copyfileobj(f_in, f_out)
-        print("Unpacked:", grib_file)
-    else:
-        print("Already unpacked:", grib_file)
-
-    return grib_file
-
-# -------------------------------
-# 2️⃣ Raster-Koordinaten berechnen
+# Raster-Koordinaten berechnen
 # -------------------------------
 def get_grid():
     proj_ps  = Proj(proj='stere', lat_0=90, lon_0=10, lat_ts=60,
                     x_0=0, y_0=0, ellps='WGS84')
     proj_geo = Proj(proj='latlong', datum='WGS84')
     transformer = Transformer.from_proj(proj_ps, proj_geo, always_xy=True)
-
-    x0, y0 = proj_ps(3.594, 46.957)   # Ursprung SW-Ecke
+    x0, y0 = proj_ps(3.594, 46.957)
     x_arr  = x0 + np.arange(NX) * DX
     y_arr  = y0 + np.arange(NY) * DY
     x_grid, y_grid = np.meshgrid(x_arr, y_arr)
@@ -85,14 +37,14 @@ def get_grid():
     return lon2d, lat2d
 
 # -------------------------------
-# 3️⃣ GRIB diagnostisch prüfen
+# GRIB diagnostisch prüfen
 # -------------------------------
 def inspect_grib(grib_file):
     try:
         import cfgrib
         datasets = cfgrib.open_datasets(grib_file)
         print(f"\n{'='*50}")
-        print(f"Gefundene Datasets im GRIB ({len(datasets)}):")
+        print(f"Gefundene Datasets ({len(datasets)}):")
         for i, d in enumerate(datasets):
             print(f"  [{i}] vars={list(d.data_vars)}  dims={dict(d.dims)}")
         print('='*50 + "\n")
@@ -100,13 +52,13 @@ def inspect_grib(grib_file):
         print("inspect_grib Fehler:", e)
 
 # -------------------------------
-# 4️⃣ OM-File + IDX bauen
+# OM-File + IDX bauen
 # -------------------------------
 def build_om(grib_file, short_name="W_GEW_01"):
     om_file  = grib_file.replace(".grb2", ".om")
     idx_file = om_file + ".idx"
 
-    print(f"\nReading GRIB: {grib_file}")
+    print(f"Reading GRIB: {grib_file}")
     ds   = xr.open_dataset(grib_file, engine="cfgrib",
                            filter_by_keys={"shortName": short_name})
     data = ds[short_name]
@@ -117,14 +69,14 @@ def build_om(grib_file, short_name="W_GEW_01"):
     print(f"  max   : {float(np.nanmax(data.values)):.2f}")
     print(f"  NaN%  : {100*np.isnan(data.values).mean():.1f}%")
 
-    # --- Forecast-Run-Zeit ---
+    # Forecast-Run-Zeit
     if "time" in ds.coords:
         time_val     = ds.time.values
         run_time_utc = (pd.to_datetime(time_val[0])
                         if not np.isscalar(time_val)
                         else pd.to_datetime(time_val))
     else:
-        m = re.search(r'WarnMOS(?:Long)?(\d{12})', grib_file)
+        m = re.search(r'WarnMOS(\d{12})', grib_file)
         if m:
             g = m.group(1)
             run_time_utc = pd.Timestamp(
@@ -134,7 +86,7 @@ def build_om(grib_file, short_name="W_GEW_01"):
 
     print(f"  run   : {run_time_utc}")
 
-    # --- Steps sammeln ---
+    # Steps sammeln
     all_times  = []
     all_arrays = []
 
@@ -162,7 +114,7 @@ def build_om(grib_file, short_name="W_GEW_01"):
 
     lon2d, lat2d = get_grid()
 
-    # --- OM + IDX schreiben ---
+    # OM + IDX schreiben
     index = []
 
     with open(om_file, "wb") as f:
@@ -207,7 +159,7 @@ def build_om(grib_file, short_name="W_GEW_01"):
             f.write(header_bytes)
 
             for c in chunks:
-                chunk_offsets.append(f.tell())   # Position der 4-Byte Länge
+                chunk_offsets.append(f.tell())
                 chunk_lens.append(len(c))
                 f.write(struct.pack("<I", len(c)))
                 f.write(c)
@@ -219,38 +171,38 @@ def build_om(grib_file, short_name="W_GEW_01"):
                 "header":       header,
             })
 
-            print(f"  Step {idx:03d} – {all_times[idx]}  ({len(chunks)} Chunks)")
+            print(f"  Step {idx:03d} – {all_times[idx]}")
 
-    # IDX schreiben
     with open(idx_file, "w") as f:
         json.dump(index, f)
 
-    print(f"\nOM-File  erstellt : {om_file}")
-    print(f"IDX-File erstellt : {idx_file}")
-    return om_file, idx_file
+    print(f"\nOM  : {om_file}")
+    print(f"IDX : {idx_file}")
 
 # -------------------------------
-# 5️⃣ Main
+# Main
 # -------------------------------
 if __name__ == "__main__":
-    # --- WarnMOS (kurzfristig) ---
-    print("\n" + "="*60)
-    print("WarnMOS (kurzfristig)")
-    print("="*60)
-    warnmos_filename = latest_filename("WarnMOS2")   # WarnMOS20... (nicht WarnMOSLong)
-    warnmos_url      = DWD_BASE + warnmos_filename
-    grib_short       = download_and_unpack(warnmos_url)
-    inspect_grib(grib_short)
-    build_om(grib_short)
+    if len(sys.argv) < 2:
+        print("Usage: python build_warnmos_short.py <grib_file>")
+        print("Beispiel: python build_warnmos_short.py warnmos_data/WarnMOS202603142200.grb2")
+        sys.exit(1)
 
-    # --- WarnMOSLong (langfristig) ---
-    print("\n" + "="*60)
-    print("WarnMOSLong (langfristig)")
-    print("="*60)
-    warnmoslong_filename = latest_filename("WarnMOSLong")
-    warnmoslong_url      = DWD_BASE + warnmoslong_filename
-    grib_long            = download_and_unpack(warnmoslong_url)
-    inspect_grib(grib_long)
-    build_om(grib_long)
+    grib_input = sys.argv[1]
 
+    # Falls .bz2 übergeben wurde → entpacken
+    if grib_input.endswith(".bz2"):
+        grib_unpacked = grib_input.replace(".bz2", "")
+        if not os.path.exists(grib_unpacked):
+            print("Entpacke .bz2 ...")
+            with bz2.BZ2File(grib_input) as f_in, open(grib_unpacked, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+        grib_input = grib_unpacked
+
+    if not os.path.exists(grib_input):
+        print(f"Datei nicht gefunden: {grib_input}")
+        sys.exit(1)
+
+    inspect_grib(grib_input)
+    build_om(grib_input)
     print("\nFertig!")
