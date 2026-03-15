@@ -1,0 +1,9 @@
+requests
+numpy
+pandas
+pyproj
+xarray
+cfgrib
+eccodes
+scipy
+zoneinfo
