@@ -3,13 +3,13 @@ import json
 import os
 import sys
 import glob
+import re
 from datetime import datetime, timezone
 
-OUTPUT_DIR   = "warnmos"
+OUTPUT_DIR    = "warnmos"
 METADATA_FILE = os.path.join(OUTPUT_DIR, "metadata.json")
 
 def generate_metadata():
-    # IDX-Dateien einlesen
     idx_files = sorted(glob.glob(os.path.join(OUTPUT_DIR, "*.om.idx")))
 
     if not idx_files:
@@ -30,14 +30,19 @@ def generate_metadata():
         time_end    = max(timestamps)
         om_basename = os.path.basename(idx_file).replace(".om.idx", "")
 
+        # Run aus Dateiname extrahieren z.B. warnmos_2026031513 → 13
+        m = re.search(r'_(\d{10})$', om_basename)
+        run = m.group(1)[8:10] if m else None  # letzte 2 Ziffern = Stunde
+
         runs.append({
-            "file":       om_basename,
-            "timesteps":  n_steps,
-            "timeStart":  time_start,
-            "timeEnd":    time_end,
+            "file":      om_basename,
+            "run":       run,
+            "timesteps": n_steps,
+            "timeStart": time_start,
+            "timeEnd":   time_end,
         })
 
-        print(f"  {om_basename}: {n_steps} Steps  {time_start} → {time_end}")
+        print(f"  {om_basename}: run={run}, {n_steps} Steps  {time_start} → {time_end}")
 
     metadata = {
         "generatedAt": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
