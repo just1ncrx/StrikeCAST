@@ -32,9 +32,14 @@ jobs:
       - name: Set RUN and DATE
         id: set_run_date
         run: |
-          HOUR=09
+          HOUR=$(date -u +%H)
+          case $HOUR in
+            04|05|06) RUN=04 ;;
+            09|10|11) RUN=09 ;;
+            16|17|18) RUN=16 ;;
+            21|22|23) RUN=21 ;;
+          esac
           DATE=$(date -u +%Y%m%d)
-          RUN=$HOUR
 
           echo "RUN=$RUN" >> $GITHUB_ENV
           echo "DATE=$DATE" >> $GITHUB_ENV
