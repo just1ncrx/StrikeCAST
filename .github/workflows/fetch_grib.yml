@@ -1,0 +1,164 @@
+name: Fetch MOS LONG GRIB2 and Generate PNGs
+
+on:
+  workflow_dispatch:
+
+jobs:
+  fetch_and_generate:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.set_run_date.outputs.run }}
+
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Cache Python packages
+        uses: actions/cache@v3
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Set RUN and DATE (hourly)
+        id: set_run_date
+        run: |
+          HOUR=$(date -u +%H)
+          DATE=$(date -u +%Y%m%d)
+          RUN=$HOUR
+
+          echo "RUN=$RUN" >> $GITHUB_ENV
+          echo "DATE=$DATE" >> $GITHUB_ENV
+
+          echo "run=$RUN" >> $GITHUB_OUTPUT
+          echo "date=$DATE" >> $GITHUB_OUTPUT
+
+          echo "Current UTC time: $HOUR -> RUN=$RUN, DATE=$DATE"
+
+
+      - name: Download WARNMOS GRB2 files
+        run: |
+          mkdir -p data/warnmoslong
+          cd data/warnmoslong
+      
+          # Prüfen, ob RUN 04,09,16 oder 21 ist
+          if [[ "$RUN" == "04" || "$RUN" == "09" || "$RUN" == "16" || "$RUN" == "21" ]]; then
+            URL="https://opendata.dwd.de/weather/local_forecasts/warnmos/WarnMOSLong${DATE}${RUN}00.grb2.bz2"
+            echo "RUN=$RUN → Lade Long-Version: $URL"
+          else
+            URL="https://opendata.dwd.de/weather/local_forecasts/warnmos/WarnMOS${DATE}${RUN}00.grb2.bz2"
+            echo "RUN=$RUN → Lade normale Version: $URL"
+          fi
+      
+          wget -q -O warnmos_${DATE}${RUN}.grb2.bz2 "$URL" || echo "Datei $URL nicht verfügbar, überspringe..."
+          if [ -f "warnmos_${DATE}${RUN}.grb2.bz2" ]; then
+            bunzip2 -f warnmos_${DATE}${RUN}.grb2.bz2
+          fi
+
+      
+      - name: Upload GRIB2 as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: grib2
+          path: data/
+
+# -------------------------------------------------------
+  # 2️⃣ Generate PNGs in parallel (matrix)
+  # -------------------------------------------------------
+  generate_pngs:
+    runs-on: ubuntu-latest
+    needs: fetch_and_generate
+    strategy:
+      matrix:
+        variable: [gewitter]
+      max-parallel: 1
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download GRIB2 artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: grib2
+          path: data/
+          
+      - name: Generate PNGs for ${{ matrix.variable }}
+        run: |
+          mkdir -p warnmoslong/${{ matrix.variable }}
+          echo "Running script for ${{ matrix.variable }}"
+          python scripts/${{ matrix.variable }}.py 
+
+      - name: Upload PNGs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: warnmoslong-${{ matrix.variable }}
+          path: warnmoslong/${{ matrix.variable }}
+
+
+
+  deploy_to_r2:
+    runs-on: ubuntu-latest
+    needs: [fetch_and_generate, generate_pngs]
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v3
+
+      - name: Download all PNGs artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: warnmoslong-*
+          path: warnmoslong_raw
+
+      - name: Merge PNG folders into one structure
+        run: |
+          mkdir -p warnmoslong/${{ needs.fetch_and_generate.outputs.run }}
+          for d in warnmoslong_raw/*; do
+            if [ -d "$d" ]; then
+              varname=$(basename "$d" | sed 's/^warnmoslong-//')  # entfernt "warnmoslong-" Prefix
+              mkdir -p warnmoslong/${{ needs.fetch_and_generate.outputs.run }}/"$varname"
+              cp -r "$d"/* warnmoslong/${{ needs.fetch_and_generate.outputs.run }}/"$varname"/ || true
+            fi
+          done
+
+      - name: Generate Metadata
+        run: |
+          python scripts/generate_metadata.py warnmoslong/${{ needs.fetch_and_generate.outputs.run }} ${{ needs.fetch_and_generate.outputs.run }} ${{ env.DATE }}
+
+      - name: Clean old runs on R2 except current
+        run: |
+          for run_folder in $(aws s3 ls s3://${{ secrets.R2_BUCKET }}/warnmoslong/ --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com | awk '{print $2}' | sed 's#/##'); do
+            if [ "$run_folder" != "${{ needs.fetch_and_generate.outputs.run }}/" ]; then
+              aws s3 rm s3://${{ secrets.R2_BUCKET }}/warnmoslong/$run_folder --recursive --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+            fi
+          done
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+
+      - name: Upload current run and metadata.json to R2
+        run: |
+          aws s3 sync ./warnmoslong/${{ needs.fetch_and_generate.outputs.run }}/ s3://${{ secrets.R2_BUCKET }}/warnmoslong/${{ needs.fetch_and_generate.outputs.run }}/ \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+          aws s3 cp ./warnmoslong/metadata.json s3://${{ secrets.R2_BUCKET }}/warnmoslong/metadata.json \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+        env:
+          AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
