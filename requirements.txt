@@ -1,8 +1,6 @@
-requests
 numpy
-pandas
-pyproj
 xarray
-cfgrib
-eccodes
+matplotlib
+cartopy
+pandas
 scipy
