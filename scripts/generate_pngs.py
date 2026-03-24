@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from matplotlib.colors import ListedColormap, BoundaryNorm
 import numpy as np
 import xarray as xr
+from scipy.ndimage import maximum_filter
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -116,10 +117,42 @@ def extract_run_label(ds):
 # Wahrscheinlichkeit
 # -------------------------------------------------------
 
-def compute_probability(ds2d, interval_hours=1):
+def _fade_out_of_range(values, lut_min, lut_max, fade_fraction=0.15):
     """
-    ds2d: Datensatz ohne time-Dimension (nur latitude/longitude).
+    Werte innerhalb [lut_min, lut_max] bleiben unverändert.
+    Werte außerhalb werden auf den Rand geclippt (für LUT-Interp),
+    aber ein Gewichts-Array (0..1) gibt an wie weit sie außerhalb sind.
+    
+    fade_fraction: wie viel % des LUT-Bereichs der Fade-Bereich ist.
+    
+    Gibt zurück:
+        clipped  : auf LUT-Bereich geclippte Werte (für interp)
+        weight   : 1.0 = vollständig innen, 0.0 = weit außerhalb
     """
+    lut_range = lut_max - lut_min
+    fade_width = lut_range * fade_fraction
+ 
+    # Gewicht berechnen
+    weight = np.ones_like(values, dtype=np.float32)
+ 
+    # Unterhalb lut_min: fade von lut_min bis lut_min - fade_width → 1..0
+    below = values < lut_min
+    if below.any():
+        dist = lut_min - values[below]
+        weight[below] = np.clip(1.0 - dist / fade_width, 0.0, 1.0)
+ 
+    # Oberhalb lut_max: fade von lut_max bis lut_max + fade_width → 1..0
+    above = values > lut_max
+    if above.any():
+        dist = values[above] - lut_max
+        weight[above] = np.clip(1.0 - dist / fade_width, 0.0, 1.0)
+ 
+    clipped = np.clip(values, lut_min, lut_max)
+    return clipped, weight
+ 
+ 
+def compute_probability(ds2d, lut, interval_hours=1):
+
     mu_mixr = np.clip(ds2d["MU_MIXR"].values, float(lut["MU_MIXR"].min()), float(lut["MU_MIXR"].max()))
     lsm     = np.clip(ds2d["lsm"].values,     float(lut["lsm"].min()),     float(lut["lsm"].max()))
     mcpr    = np.clip(ds2d["mcpr"].values,     float(lut["mcpr"].min()),    float(lut["mcpr"].max()))
@@ -138,25 +171,20 @@ def compute_probability(ds2d, interval_hours=1):
     prob = np.nan_to_num(prob, nan=0.0)
     prob = np.clip(prob, 0.0, 1.0)
 
-    # nach Battaglioli et al. (2023), Eq. (3): P_nh = 1 - (1 - P_1h)^n
+    # Orographie-Maske: NUR im Gebirge dämpfen
+    if "z_sfc" in ds2d:
+        z = ds2d["z_sfc"].values
+
+        # Maximale Höhe im 2x2-Umkreis (entspricht ~20km bei 0.025° Gitter)
+        z_max = maximum_filter(z, size=2, mode="nearest")
+
+        orog_weight = np.clip(1.0 - (z_max - 400.0) / 800.0, 0.0, 1.0)
+        prob = prob * orog_weight
+
     ih = max(1, int(interval_hours))
     prob_interval = 1.0 - np.power(1.0 - prob, ih)
     return np.clip(prob_interval * 100.0, 0, 100)
 
-
-def smooth_probability(prob, sigma=1.2):
-    if sigma <= 0:
-        return prob
-    try:
-        from scipy.ndimage import gaussian_filter
-        return gaussian_filter(prob, sigma=sigma, mode="nearest")
-    except Exception:
-        p = np.pad(prob, ((1, 1), (1, 1)), mode="edge")
-        return (
-            p[:-2, :-2] + p[:-2, 1:-1] + p[:-2, 2:] +
-            p[1:-1, :-2] + p[1:-1, 1:-1] + p[1:-1, 2:] +
-            p[2:, :-2] + p[2:, 1:-1] + p[2:, 2:]
-        ) / 9.0
 
 
 # -------------------------------------------------------
@@ -317,14 +345,14 @@ def main():
                 interval_hours = max(1, int(round(float(dt_hours))))
 
             ds_start   = ds.isel(time=0, drop=True)
-            prob       = compute_probability(ds_start, interval_hours=interval_hours)
+            prob = compute_probability(ds_start, lut, interval_hours=interval_hours)
             valid_from = pd.Timestamp(prev_time)
             valid_to   = pd.Timestamp(step_time)
 
         else:
             interval_hours = int(ds.attrs.get("interval_hours", 3))
             ds_start = ds.isel(time=0, drop=True) if "time" in ds.dims else ds
-            prob     = compute_probability(ds_start, interval_hours=interval_hours)
+            prob = compute_probability(ds_start, lut, interval_hours=interval_hours)
 
             time_val   = ds["time"].values[0] if "time" in ds.dims else None
 
