@@ -4,3 +4,5 @@ matplotlib
 cartopy
 pandas
 scipy
+ecmwf-opendata
+eccodes
