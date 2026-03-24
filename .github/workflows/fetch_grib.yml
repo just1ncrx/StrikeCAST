@@ -6,10 +6,13 @@ on:
 jobs:
 
   # ─────────────────────────────────────────────
-  # Alles in einem Run – kein Artifact-Upload
+  # 1️⃣  Alles in einem Run
   # ─────────────────────────────────────────────
   strikecast:
     runs-on: ubuntu-latest
+    outputs:
+      run:  ${{ steps.meta.outputs.run }}
+      date: ${{ steps.meta.outputs.date }}
 
     steps:
       - name: Checkout
@@ -58,16 +61,49 @@ jobs:
           mkdir -p pngs/gewitter
           python scripts/gewitter.py
 
+      - name: Upload PNGs artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: strikecast-pngs
+          path: pngs/gewitter/
+          retention-days: 1
+
+
+  # ─────────────────────────────────────────────
+  # 2️⃣  Deploy – wartet auf strikecast
+  # ─────────────────────────────────────────────
+  deploy_to_r2:
+    runs-on: ubuntu-latest
+    needs: strikecast
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Download PNGs artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: strikecast-pngs
+          path: pngs/gewitter/
+
       - name: Generate metadata
         run: |
           python scripts/generate_metadata.py \
             pngs/gewitter \
-            ${{ steps.meta.outputs.run }} \
-            ${{ steps.meta.outputs.date }}
+            ${{ needs.strikecast.outputs.run }} \
+            ${{ needs.strikecast.outputs.date }}
 
       - name: Clean old runs on R2
         run: |
-          CURRENT_RUN="${{ steps.meta.outputs.run }}"
+          CURRENT_RUN="${{ needs.strikecast.outputs.run }}"
           for folder in $(aws s3 ls s3://${{ secrets.R2_BUCKET }}/strikecast/ \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com \
             | awk '{print $2}' | sed 's#/##'); do
@@ -82,17 +118,13 @@ jobs:
           AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
-      - name: Upload PNGs to R2
+      - name: Upload PNGs and metadata.json to R2
         run: |
+          RUN="${{ needs.strikecast.outputs.run }}"
           aws s3 sync pngs/gewitter/ \
-            s3://${{ secrets.R2_BUCKET }}/strikecast/${{ steps.meta.outputs.run }}/gewitter/ \
+            s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/gewitter/ \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
-        env:
-          AWS_ACCESS_KEY_ID:     ${{ secrets.R2_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
 
-      - name: Upload metadata.json to R2
-        run: |
           aws s3 cp pngs/metadata.json \
             s3://${{ secrets.R2_BUCKET }}/strikecast/metadata.json \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
