@@ -51,15 +51,15 @@ jobs:
                -o data/lut/lightning_lut.nc
 
       - name: Download ECMWF data
-        run: python scripts/download_gewitter.py
+        run: python scripts/download_grib.py
 
       - name: Process – Prädiktoren berechnen
-        run: python scripts/process_gewitter.py
+        run: python scripts/make_predict.py
 
       - name: Generate PNGs
         run: |
           mkdir -p pngs/gewitter
-          python scripts/gewitter.py
+          python scripts/generate_pngs.py
 
       - name: Upload PNGs artifact
         uses: actions/upload-artifact@v4
