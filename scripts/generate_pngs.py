@@ -171,19 +171,39 @@ def compute_probability(ds2d, lut, interval_hours=1):
     prob = np.nan_to_num(prob, nan=0.0)
     prob = np.clip(prob, 0.0, 1.0)
 
-    # Orographie-Maske: NUR im Gebirge dämpfen
+    # Physikalischer Guard: stabiles LI → Wahrscheinlichkeit dämpfen
+    # LI > 2: dämpfen beginnen, LI >= 6: komplett 0
+    mu_li_raw = ds2d["MU_LI"].values
+    stability_weight = np.clip(1.0 - (mu_li_raw - 2.0) / 4.0, 0.0, 1.0)
+    prob = prob * stability_weight
+
+    # Orographie-Maske: NACH LUT und NACH stability_weight
+    orog_weight = np.ones_like(prob)
     if "z_sfc" in ds2d:
         z = ds2d["z_sfc"].values
-
-        # Maximale Höhe im 2x2-Umkreis (entspricht ~20km bei 0.025° Gitter)
         z_max = maximum_filter(z, size=2, mode="nearest")
+        orog_weight = np.clip(1.0 - (z_max - 600.0) / 900.0, 0.0, 1.0)
+    prob = prob * orog_weight
 
-        orog_weight = np.clip(1.0 - (z_max - 400.0) / 800.0, 0.0, 1.0)
-        prob = prob * orog_weight
+    # --- Debug: Ausreißer diagnostizieren ---
+    high_mask = prob > 0.5
+    if high_mask.any():
+        print(f"\n⚠️  {high_mask.sum()} Gitterpunkte mit prob > 50%")
+        print(f"   prob:     min={prob[high_mask].min():.3f}  max={prob[high_mask].max():.3f}")
+        print(f"   MU_LI:    min={ds2d['MU_LI'].values[high_mask].min():.2f}  max={ds2d['MU_LI'].values[high_mask].max():.2f}")
+        print(f"   MU_MIXR:  min={ds2d['MU_MIXR'].values[high_mask].min():.2f}  max={ds2d['MU_MIXR'].values[high_mask].max():.2f}")
+        print(f"   mcpr:     min={ds2d['mcpr'].values[high_mask].min():.6f}  max={ds2d['mcpr'].values[high_mask].max():.6f}")
+        print(f"   RHmean:   min={ds2d['RHmean'].values[high_mask].min():.1f}  max={ds2d['RHmean'].values[high_mask].max():.1f}")
+        print(f"   z_sfc:    min={ds2d['z_sfc'].values[high_mask].min():.0f}  max={ds2d['z_sfc'].values[high_mask].max():.0f}  ← Höhe in m")
 
+        idx = np.unravel_index(np.argmax(prob), prob.shape)
+        print(f"\n   Höchster Wert bei Index {idx}:")
+        print(f"   prob={prob[idx]:.3f}  MU_LI={ds2d['MU_LI'].values[idx]:.2f}  MU_MIXR={ds2d['MU_MIXR'].values[idx]:.2f}  mcpr={ds2d['mcpr'].values[idx]:.6f}  z_sfc={ds2d['z_sfc'].values[idx]:.0f}m")
+
+    # Intervall-Skalierung ZULETZT
     ih = max(1, int(interval_hours))
     prob_interval = 1.0 - np.power(1.0 - prob, ih)
-    return np.clip(prob_interval * 100.0, 0, 100)
+    return np.clip(prob_interval * 100.0, 0.0, 100.0)
 
 
 
@@ -333,6 +353,22 @@ def main():
         # --- Run-Label aus NC holen (z.B. '00z') ---
         run_label = extract_run_label(ds)
 
+        # --- Koordinaten ---
+        lats = ds["latitude"].values
+        lons = ds["longitude"].values
+        if lats.ndim == 1 and lons.ndim == 1:
+            lons2d, lats2d = np.meshgrid(lons, lats)
+        else:
+            lons2d, lats2d = lons, lats
+
+        # --- Auf Deutschland-Extent zuschneiden VOR compute_probability ---
+        lat_mask = (lats2d[:, 0] >= 47.0) & (lats2d[:, 0] <= 56.0)
+        lon_mask = (lons2d[0, :] >= 5.0)  & (lons2d[0, :] <= 16.0)
+        lat_idx  = np.where(lat_mask)[0]
+        lon_idx  = np.where(lon_mask)[0]
+        lats2d   = lats2d[np.ix_(lat_mask, lon_mask)]
+        lons2d   = lons2d[np.ix_(lat_mask, lon_mask)]
+
         # --- Zeitscheiben auswerten ---
         if "time" in ds.dims and ds.sizes["time"] == 2:
             prev_time = ds["time"].values[0]
@@ -344,7 +380,8 @@ def main():
                 dt_hours = (step_time - prev_time) / np.timedelta64(1, "h")
                 interval_hours = max(1, int(round(float(dt_hours))))
 
-            ds_start   = ds.isel(time=0, drop=True)
+            ds_start = ds.isel(time=0, drop=True)
+            ds_start = ds_start.isel(latitude=lat_idx, longitude=lon_idx)
             prob = compute_probability(ds_start, lut, interval_hours=interval_hours)
             valid_from = pd.Timestamp(prev_time)
             valid_to   = pd.Timestamp(step_time)
@@ -352,30 +389,16 @@ def main():
         else:
             interval_hours = int(ds.attrs.get("interval_hours", 3))
             ds_start = ds.isel(time=0, drop=True) if "time" in ds.dims else ds
+            ds_start = ds_start.isel(latitude=lat_idx, longitude=lon_idx)
             prob = compute_probability(ds_start, lut, interval_hours=interval_hours)
 
-            time_val   = ds["time"].values[0] if "time" in ds.dims else None
+            time_val = ds["time"].values[0] if "time" in ds.dims else None
 
             if time_val is not None:
                 valid_from = pd.Timestamp(time_val)
                 valid_to   = valid_from + pd.Timedelta(hours=interval_hours)
             else:
                 valid_from = valid_to = None
-
-        # --- Koordinaten ---
-        lats = ds["latitude"].values
-        lons = ds["longitude"].values
-        if lats.ndim == 1 and lons.ndim == 1:
-            lons2d, lats2d = np.meshgrid(lons, lats)
-        else:
-            lons2d, lats2d = lons, lats
-
-        # --- Auf Deutschland-Extent zuschneiden ---
-        lat_mask = (lats2d[:, 0] >= 47.0) & (lats2d[:, 0] <= 56.0)
-        lon_mask = (lons2d[0, :] >= 5.0)  & (lons2d[0, :] <= 16.0)
-        lats2d = lats2d[np.ix_(lat_mask, lon_mask)]
-        lons2d = lons2d[np.ix_(lat_mask, lon_mask)]
-        prob   = prob[np.ix_(lat_mask, lon_mask)]
 
         # PNG: gewitter_<Ende des Prognosezeitraums in deutscher Ortszeit>.png
         if valid_to is not None:
@@ -385,7 +408,9 @@ def main():
             outname = "gewitter_unknown.png"
         outfile = os.path.join(OUT_DIR, outname)
 
+        print(f"  prob: min={prob.min():.1f}%  max={prob.max():.1f}%  mean={prob.mean():.1f}%")
         print(lats2d.shape, lons2d.shape)
+
         plot_png(
             lats2d, lons2d, prob, outfile,
             interval_hours=interval_hours,
