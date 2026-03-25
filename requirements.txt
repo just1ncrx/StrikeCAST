@@ -7,3 +7,4 @@ scipy
 ecmwf-opendata
 eccodes
 cfgrib
+netCDF4
