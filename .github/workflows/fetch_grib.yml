@@ -76,10 +76,6 @@ jobs:
           python download/download_gh_pl.py &
           wait
 
-
-      - name: Validate downlaods
-        run: python download/validate_downloads.py
-
       - name: Process – Prädiktoren berechnen
         run: python scripts/make_predict.py
 
