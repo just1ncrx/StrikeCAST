@@ -13,6 +13,7 @@ DATE_ISO = f"{DATE[:4]}-{DATE[4:6]}-{DATE[6:8]}"
 STEPS  = list(range(0, 49, 3))
 PARAM  = "2d"
 FOLDER = os.path.join("data", "gewitter", PARAM)
+TARGET   = os.path.join(FOLDER, f"{PARAM}_all_steps.grib2")
 
 EXPECTED_MESSAGES = 1   # Oberfläche: 1 Message pro Step
 MAX_RETRIES       = 3
@@ -47,53 +48,49 @@ def is_valid(path: str) -> bool:
     return True
 
 
-def download_step(step: int) -> bool:
+def main():
+    print(f"=== Download: {PARAM} (Oberfläche, alle Steps in eine Datei) ===")
+    print(f"Datum: {DATE_ISO}  Lauf: {TIME:02d} UTC")
+    print(f"Steps: {STEPS}")
+    print(f"Ziel:  {TARGET}")
+    print()
+ 
     os.makedirs(FOLDER, exist_ok=True)
-    filename    = f"{PARAM}_step_{step:03d}.grib2"
-    target_path = os.path.join(FOLDER, filename)
-
-    if is_valid(target_path):
-        print(f"  ✅ Bereits vorhanden und valide: {target_path}")
-        return True
-
-    if os.path.exists(target_path):
-        os.remove(target_path)
-
+ 
+    if is_valid(TARGET):
+        print(f"✅ Bereits vorhanden und valide: {TARGET}")
+        return
+ 
+    if os.path.exists(TARGET):
+        os.remove(TARGET)
+ 
     for attempt in range(1, MAX_RETRIES + 1):
         try:
             client.retrieve(
-                date=DATE_ISO, time=TIME, type="fc", step=step,
-                param=PARAM, levtype="sfc",
-                target=target_path,
+                date=DATE_ISO,
+                time=TIME,
+                type="fc",
+                step=STEPS,        # alle Steps auf einmal
+                param=PARAM,
+                levtype="sfc",
+                target=TARGET,
             )
-            if is_valid(target_path):
-                print(f"  ✅ {target_path}")
-                return True
+            if is_valid(TARGET):
+                print(f"✅ Fertig: {TARGET}  ({count_grib2_messages(TARGET)} Messages)")
+                return
             print(f"  ⚠️  Versuch {attempt}/{MAX_RETRIES}: Download unvollständig")
         except Exception as e:
-            print(f"  ⚠️  Versuch {attempt}/{MAX_RETRIES} Fehler bei Step {step}: {e}")
-
-        if os.path.exists(target_path):
-            os.remove(target_path)
+            print(f"  ⚠️  Versuch {attempt}/{MAX_RETRIES} Fehler: {e}")
+ 
+        if os.path.exists(TARGET):
+            os.remove(TARGET)
         if attempt < MAX_RETRIES:
             print(f"     Warte {RETRY_DELAY}s vor erneutem Versuch...")
             time.sleep(RETRY_DELAY)
-
-    print(f"  ❌ FEHLER: Step {step} nach {MAX_RETRIES} Versuchen fehlgeschlagen!")
-    return False
-
-
-def main():
-    print(f"=== Download: {PARAM} (Oberfläche) ===")
-    print(f"Datum: {DATE_ISO}  Lauf: {TIME:02d} UTC")
-    print()
-    failed = [step for step in STEPS if not download_step(step)]
-    print()
-    if failed:
-        print(f"❌ {len(failed)} Steps fehlgeschlagen: {failed}")
-        sys.exit(1)
-    print(f"✅ Fertig: {PARAM} – alle {len(STEPS)} Steps OK")
-
-
+ 
+    print(f"❌ FEHLER: Download nach {MAX_RETRIES} Versuchen fehlgeschlagen!")
+    sys.exit(1)
+ 
+ 
 if __name__ == "__main__":
     main()
