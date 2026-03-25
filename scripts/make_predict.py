@@ -14,8 +14,8 @@ from datetime import datetime, timedelta
 # -------------------------------------------------------
 # Konfiguration
 # -------------------------------------------------------
-date = os.getenv("DATE", "20260324")
-run  = int(os.getenv("RUN", 12))
+date = os.getenv("DATE", "20260325")
+run  = int(os.getenv("RUN", 0))
 
 BASE_DIR   = os.path.join("data", "gewitter")
 OUTPUT_DIR = os.path.join("data", "output")
@@ -29,6 +29,11 @@ g   = 9.80665
 rd  = 287.04
 rv  = 461.50
 eps = rd / rv
+
+
+# Bounding Box Europa
+LAT_MIN, LAT_MAX = 30.0, 72.0
+LON_MIN, LON_MAX = -15.0, 35.0
 
 # -------------------------------------------------------
 # Dateipfade
@@ -48,6 +53,7 @@ def file_ok(*paths):
 def read_sfc(param, step):
     ds = xr.open_dataset(sfc_path(param, step), engine="cfgrib", backend_kwargs={"indexpath": ""})
     varname = list(ds.data_vars)[0]
+    ds = ds.sel(latitude=slice(LAT_MAX, LAT_MIN), longitude=slice(LON_MIN, LON_MAX))
     return ds[varname].values, ds["latitude"].values, ds["longitude"].values
 
 def read_pl(param, step):
@@ -55,6 +61,7 @@ def read_pl(param, step):
                          backend_kwargs={"indexpath": ""},
                          filter_by_keys={"typeOfLevel": "isobaricInhPa"})
     varname = list(ds.data_vars)[0]
+    ds = ds.sel(latitude=slice(LAT_MAX, LAT_MIN), longitude=slice(LON_MIN, LON_MAX))
     data   = ds[varname].values
     levels = ds["isobaricInhPa"].values
     lats   = ds["latitude"].values
@@ -113,13 +120,27 @@ def calc_deg0l(t_pl, z_pl, levels):
 
 def calc_mu_li(t_pl, z_pl, q_pl, levels, t2m, td2m, sp_Pa):
     sp_hPa = sp_Pa / 100.0
-    idx_500 = np.argmin(np.abs(levels-500.0))
+    idx_500 = np.argmin(np.abs(levels - 500.0))
     t_env_500 = t_pl[idx_500]
-    q_sfc = np.clip(0.622*es_buck(td2m)/(sp_hPa-es_buck(td2m)),0.0,0.06)
+
+    # Oberflächen-Parcel: q und theta_e berechnen
+    q_sfc = np.clip(0.622 * es_buck(td2m) / (sp_hPa - es_buck(td2m)), 0.0, 0.06)
     theta_e_parcel = theta_ep_bolton(t2m, sp_hPa, q_sfc)
-    T_parcel_500 = theta_e_parcel * (500.0/1000.0)**0.2854
-    mu_li = t_env_500 - T_parcel_500
-    return np.clip(mu_li,-20.0,20.0)
+
+    # Feuchtadiabatische Parcel-Temperatur bei 500 hPa iterativ lösen:
+    # Gesucht: T so dass theta_ep_bolton(T, 500, q_sat(T, 500)) = theta_e_parcel
+    Lv = 2.5e6
+    T_guess = t_env_500.copy()
+    for _ in range(6):
+        es_500    = es_buck(T_guess)
+        q_sat_500 = np.clip(0.622 * es_500 / (500.0 - es_500), 0.0, 0.06)
+        theta_e_guess = theta_ep_bolton(T_guess, 500.0, q_sat_500)
+        dtheta_dT = theta_e_guess / T_guess * (1.0 + Lv * q_sat_500 / (rd * T_guess))
+        T_guess = T_guess + (theta_e_parcel - theta_e_guess) / np.maximum(dtheta_dT, 1e-6)
+        T_guess = np.clip(T_guess, 200.0, 320.0)
+
+    mu_li = t_env_500 - T_guess
+    return np.clip(mu_li, -20.0, 20.0)
 
 def calc_lcl_height(t2m, td2m):
     return np.maximum((t2m-td2m)*125.0,0.0)
@@ -192,15 +213,25 @@ def process_step_pair(prev_step, step):
     t_pl,levels,_,_=read_pl("t",prev_step)
     q_pl,_,_,_=read_pl("q",prev_step)
     r_pl,_,_,_=read_pl("r",prev_step)
+    r_pl=np.clip(r_pl,0.0,100.0)  # Fix: RH >100% verhindern
     u_pl,_,_,_=read_pl("u",prev_step)
     v_pl,_,_,_=read_pl("v",prev_step)
     z_pl,_,_,_=read_pl("gh",prev_step)
+
 
     # --- Prädiktoren ---
     rh_mean=calc_mean_rh(r_pl,levels)
     # tp ist in Metern akkumuliert; AR-CHaMo-LUT nutzt mcpr im kleinen Wertebereich
     # (konsistent als m pro Stunde aus Delta(tp)/Delta(t)).
     mcpr=np.maximum((tp1-tp0)/(step-prev_step),0.0)
+    cape_weight = np.clip(mucape / 100.0, 0.0, 1.0)
+    mcpr = mcpr * cape_weight
+    mcpr = np.clip(mcpr, 0.0, 0.00296)
+    # Debug: mcpr Wertebereich prüfen
+    print(f"  mcpr vor Gewichtung: min={np.maximum((tp1-tp0)/(step-prev_step),0.0).min():.6f} max={np.maximum((tp1-tp0)/(step-prev_step),0.0).max():.6f} m/h")
+    print(f"  mcpr nach Gewichtung: min={mcpr.min():.6f} max={mcpr.max():.6f} m/h")
+    print(f"  mcpr >0 Pixel: {(mcpr>0).sum()} von {mcpr.size}")
+    print(f"  mcpr Perzentile 90/95/99: {np.percentile(mcpr,90):.6f} / {np.percentile(mcpr,95):.6f} / {np.percentile(mcpr,99):.6f}")
     mu_mixr=calc_mixr_2m(td2m,sp)
     ml_lcl=calc_lcl_height(t2m,td2m)
     deg0l=calc_deg0l(t_pl,z_pl,levels)
@@ -210,6 +241,15 @@ def process_step_pair(prev_step, step):
     sb_wmax=np.sqrt(np.maximum(2.0*mucape,0.0))
     mu_cape_m10=np.maximum(mucape*0.30,0.0)
     cin=np.full_like(t2m,np.nan)
+
+        # Prints NACH Berechnung von mu_mixr
+    print(f"  td2m: min={td2m.min():.1f} max={td2m.max():.1f} K")
+    print(f"  t2m:  min={t2m.min():.1f} max={t2m.max():.1f} K")
+    print(f"  sp:   min={sp.min():.0f} max={sp.max():.0f} Pa")
+    print(f"  MU_MIXR: min={mu_mixr.min():.2f} max={mu_mixr.max():.2f} g/kg")
+    print(f"  RHmean: min={rh_mean.min():.1f} max={rh_mean.max():.1f} %")
+    print(f"  mcpr: min={mcpr.min():.6f} max={mcpr.max():.6f} m/h")
+    print(f"  td2m Extremwerte: {np.percentile(td2m, 99):.1f} K = {np.percentile(td2m, 99)-273.15:.1f}°C (99. Perzentil)")
 
     predictors={
         "MU_LI":mu_li,"MU_CAPE":mucape,"MU_CAPE_M10":mu_cape_m10,"SB_WMAX":sb_wmax,
