@@ -14,7 +14,7 @@ STEPS           = list(range(0, 49, 3))
 PRESSURE_LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
 PARAM           = "gh"
 FOLDER          = os.path.join("data", "gewitter", PARAM)
-TARGET          = os.path.join(FOLDER, f"{param}_pl_all_steps.grib2")
+TARGET          = os.path.join(FOLDER, f"{PARAM}_pl_all_steps.grib2")
 
 EXPECTED_LEVELS = len(PRESSURE_LEVELS)  # 13
 MAX_RETRIES     = 3

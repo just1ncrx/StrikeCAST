@@ -13,7 +13,7 @@ DATE_ISO = f"{DATE[:4]}-{DATE[4:6]}-{DATE[6:8]}"
 STEPS  = list(range(0, 49, 3))
 PARAM  = "sp"
 FOLDER = os.path.join("data", "gewitter", PARAM)
-TARGET = os.path.join(FOLDER, f"{param}_pl_all_steps.grib2")
+TARGET = os.path.join(FOLDER, f"{PARAM}_all_steps.grib2")
 
 EXPECTED_MESSAGES = 1   # Oberfläche: 1 Message pro Step
 MAX_RETRIES       = 3
