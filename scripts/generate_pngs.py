@@ -225,7 +225,7 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
     from matplotlib.colors import ListedColormap, BoundaryNorm
 
     # --- Diskrete Colormap in 5%-Schritten ---
-    bounds = [0, 5, 10, 15, 20, 25, 30, 40, 50, 60, 70, 80, 85, 90, 95, 97, 100]
+    bounds = [0,1,2,5,10,20,30,40,50,60,70,80,90,95,98,100]
     colors = [
         "#056B6F","#079833","#08B015","#40C50C","#7DD608",
         "#9BE105","#BBEA04","#DBF402","#FFF600","#FEDC00",
@@ -311,7 +311,7 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
 
     footer_ax.text(
         0.01, 0.85,
-        f"Gewitterwahrscheinlichkeit, 3Std\n{run_str}",
+        f"Gewitterwahrscheinlichkeit (%), 3Std\n{run_str}",
         fontsize=12, fontweight="bold", va="top", ha="left",
     )
     footer_ax.text(
