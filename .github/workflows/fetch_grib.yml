@@ -55,7 +55,7 @@ jobs:
                -o data/lut/lightning_lut.nc
 
       - name: Download ECMWF data
-        run: 
+        run: |
           python download/download_2t.py &
           python download/download_2d.py &
           python download/download_sp.py &
