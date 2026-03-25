@@ -38,7 +38,7 @@ jobs:
         run: |
           HOUR=$(date -u +%H)
           case $HOUR in
-            07|08|09|11|12|14) RUN=00 ;;
+            07|08|09|11|12|15) RUN=00 ;;
             19|20|21|22) RUN=12 ;;
           esac
           DATE=$(date -u +%Y%m%d)
