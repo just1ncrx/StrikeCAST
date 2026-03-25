@@ -75,7 +75,7 @@ def main():
                 step=STEPS,        # alle Steps auf einmal
                 param=PARAM,
                 levtype="pl",
-                levellist="PRESSURE_LEVELS"
+                levellist="PRESSURE_LEVELS",
                 target=TARGET,
             )
             if is_valid(TARGET):

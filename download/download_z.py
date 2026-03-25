@@ -50,7 +50,6 @@ def is_valid(path: str) -> bool:
 def main():
     print(f"=== Download: {PARAM} (Oberfläche, alle Steps in eine Datei) ===")
     print(f"Datum: {DATE_ISO}  Lauf: {TIME:02d} UTC")
-    print(f"Steps: {STEPS}")
     print(f"Ziel:  {TARGET}")
     print()
  
@@ -69,7 +68,7 @@ def main():
                 date=DATE_ISO,
                 time=TIME,
                 type="fc",
-                step=STEPS,        # alle Steps auf einmal
+                step=0,        # alle Steps auf einmal
                 param=PARAM,
                 levtype="sfc",
                 target=TARGET,
