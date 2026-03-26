@@ -24,7 +24,7 @@ OUTPUT_DIR = os.path.join("data", "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # Nur Steps 0–48h alle 3h (entspricht Download-Script)
-steps_all = list(range(0, 49, 3))
+steps_all = list(range(6, 55, 3))
 
 # Physikalische Konstanten
 g   = 9.80665
