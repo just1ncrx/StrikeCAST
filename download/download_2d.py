@@ -84,7 +84,10 @@ def main():
                 return
             print(f"  ⚠️  Versuch {attempt}/{MAX_RETRIES}: Download unvollständig")
         except Exception as e:
-            print(f"  ⚠️  Versuch {attempt}/{MAX_RETRIES} Fehler: {e}")
+           if is_throttle_error(e):
+                print(f"  🚦 Rate-limit / Throttle: {e}")
+            else:
+                print(f"  ⚠️  Versuch {attempt}/{MAX_RETRIES} Fehler: {e}")
  
         if os.path.exists(TARGET):
             os.remove(TARGET)
