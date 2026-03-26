@@ -10,7 +10,7 @@ DATE = os.getenv("DATE", "20260325")
 TIME = int(os.getenv("RUN", 0))
 DATE_ISO = f"{DATE[:4]}-{DATE[4:6]}-{DATE[6:8]}"
 
-STEPS  = list(range(0, 49, 3))
+STEPS = list(range(6, 55, 3))  # [6, 9, 12, ..., 54] → 17 Steps
 PARAM  = "mucape"
 FOLDER = os.path.join("data", "gewitter", PARAM)
 TARGET   = os.path.join(FOLDER, f"{PARAM}_all_steps.grib2")
