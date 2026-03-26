@@ -17,8 +17,8 @@ FOLDER          = os.path.join("data", "gewitter", PARAM)
 TARGET          = os.path.join(FOLDER, f"{PARAM}_pl_all_steps.grib2")
 
 EXPECTED_LEVELS = len(STEPS) * len(PRESSURE_LEVELS)  # 221
-MAX_RETRIES     = 3
-RETRY_DELAY     = 10
+MAX_RETRIES     = 5
+RETRY_DELAY     = 15
 
 client = Client(source="aws")
 
@@ -83,7 +83,10 @@ def main():
                 return
             print(f"  ⚠️  Versuch {attempt}/{MAX_RETRIES}: Download unvollständig")
         except Exception as e:
-            print(f"  ⚠️  Versuch {attempt}/{MAX_RETRIES} Fehler: {e}")
+            if is_throttle_error(e):
+                print(f"  🚦 Rate-limit / Throttle: {e}")
+            else:
+                print(f"  ⚠️  Versuch {attempt}/{MAX_RETRIES} Fehler: {e}")
  
         if os.path.exists(TARGET):
             os.remove(TARGET)
