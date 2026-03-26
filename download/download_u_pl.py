@@ -49,6 +49,10 @@ def is_valid(path: str) -> bool:
         return False
     return True
 
+def is_throttle_error(e: Exception) -> bool:
+    msg = str(e).lower()
+    return any(k in msg for k in ("slow", "429", "throttl", "too many", "503", "timeout"))
+
 
 def main():
     print(f"=== Download: {PARAM} (Oberfläche, alle Steps in eine Datei) ===")
