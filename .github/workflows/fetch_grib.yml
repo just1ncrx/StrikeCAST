@@ -58,15 +58,18 @@ jobs:
         run: |
           python download/download_2t.py &
           python download/download_2d.py &
+          wait
           python download/download_sp.py &
           python download/download_tp.py &
           wait
           python download/download_lsm.py &
           python download/download_mucape.py &
+          wait
           python download/download_10u.py &
           python download/download_10v.py &
           wait
           python download/download_z.py &
+          wait
           python download/download_t_pl.py &
           python download/download_q_pl.py &
           python download/download_r_pl.py &
