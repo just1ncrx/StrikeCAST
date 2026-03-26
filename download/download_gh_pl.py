@@ -10,7 +10,7 @@ DATE = os.getenv("DATE", "20260325")
 TIME = int(os.getenv("RUN", 0))
 DATE_ISO = f"{DATE[:4]}-{DATE[4:6]}-{DATE[6:8]}"
 
-STEPS           = list(range(0, 49, 3))
+STEPS = list(range(6, 55, 3))  # [6, 9, 12, ..., 54] → 17 Steps
 PRESSURE_LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
 PARAM           = "gh"
 FOLDER          = os.path.join("data", "gewitter", PARAM)
