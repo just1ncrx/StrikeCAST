@@ -17,8 +17,8 @@ FOLDER          = os.path.join("data", "gewitter", PARAM)
 TARGET          = os.path.join(FOLDER, f"{PARAM}_pl_all_steps.grib2")
 
 EXPECTED_LEVELS = len(STEPS) * len(PRESSURE_LEVELS)  #221
-MAX_RETRIES     = 3
-RETRY_DELAY     = 10
+MAX_RETRIES     = 5
+RETRY_DELAY     = 15
 
 client = Client(source="aws")
 
