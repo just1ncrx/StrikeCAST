@@ -56,21 +56,20 @@ jobs:
 
       - name: Download ECMWF data
         run: |
-          python download/download_z.py &
-          python download/download_lsm.py &
-          wait
           python download/download_2t.py &
           python download/download_2d.py &
           python download/download_sp.py &
           python download/download_tp.py &
+          python download/download_lsm.py &
+          wait
           python download/download_mucape.py &
           python download/download_10u.py &
           python download/download_10v.py &
-          wait
+          python download/download_z.py &
           python download/download_t_pl.py &
+          wait
           python download/download_q_pl.py &
           python download/download_r_pl.py &
-          wait
           python download/download_u_pl.py &
           python download/download_v_pl.py &
           python download/download_gh_pl.py &
