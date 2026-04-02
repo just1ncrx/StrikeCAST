@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
 """
-process_gewitter.py  –  v5 (bundled files)
+process_gewitter.py  –  v6 (per-step files)
 Liest ECMWF Open Data aus data/gewitter/<param>/
-und berechnet AR-CHaMo-Prädiktoren für Gewittervorhersage.
-Speichert Ergebnisse als NetCDF4 in data/output/ mit Zeit-Koordinate.
-
-v5: Unterstützt gebündelte GRIB2-Dateien (alle Steps in einer Datei).
+Format: param_stepXX.grib2 bzw. param_plLEVEL_stepXX.grib2
 """
 
 import os
@@ -16,131 +13,135 @@ from datetime import datetime, timedelta
 # -------------------------------------------------------
 # Konfiguration
 # -------------------------------------------------------
-date = os.getenv("DATE", "20260325")
-run  = int(os.getenv("RUN", 12))
+date = os.getenv("DATE", "20260401")
+run  = int(os.getenv("RUN", 0))
 
 BASE_DIR   = os.path.join("data", "gewitter")
 OUTPUT_DIR = os.path.join("data", "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-# Nur Steps 0–48h alle 3h (entspricht Download-Script)
-steps_all = list(range(6, 55, 3))
+steps_all = list(range(6, 145, 3))
 
-# Physikalische Konstanten
 g   = 9.80665
 rd  = 287.04
 rv  = 461.50
 eps = rd / rv
 
-# Bounding Box Europa
 LAT_MIN, LAT_MAX = 30.0, 72.0
 LON_MIN, LON_MAX = -15.0, 35.0
 
-# -------------------------------------------------------
-# Dateipfade
-# -------------------------------------------------------
-def sfc_path(param):
-    return os.path.join(BASE_DIR, param, f"{param}_all_steps.grib2")
+PRESSURE_LEVELS = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
 
-def pl_path(param):
-    return os.path.join(BASE_DIR, param, f"{param}_pl_all_steps.grib2")
+# -------------------------------------------------------
+# Dateipfade  (neu: pro Step)
+# -------------------------------------------------------
+def sfc_path(param, step):
+    return os.path.join(BASE_DIR, param, f"{param}_step{step:02d}.grib2")
+
+def pl_path(param, level, step):
+    return os.path.join(BASE_DIR, f"{param}_pl", f"{param}_pl{level}_step{step:02d}.grib2")
 
 def file_ok(*paths):
     return all(os.path.exists(p) for p in paths)
 
 # -------------------------------------------------------
-# GRIB lesen  (v5: step-Dimension korrekt auswählen)
+# GRIB lesen  (v6: kein step-Index mehr nötig, direkt 2-D)
 # -------------------------------------------------------
-
-# Cache: geöffnete Datasets wiederverwenden (vermeidet wiederholtes Einlesen)
 _ds_cache = {}
 
-def _get_sfc_ds(param):
-    key = f"sfc_{param}"
+def _open_grib(path, filter_keys=None):
+    key = path
     if key not in _ds_cache:
-        ds = xr.open_dataset(
-            sfc_path(param),
-            engine="cfgrib",
-            backend_kwargs={"indexpath": ""},
-        )
+        kwargs = {"engine": "cfgrib", "backend_kwargs": {"indexpath": ""}}
+        if filter_keys:
+            kwargs["filter_by_keys"] = filter_keys
+        ds = xr.open_dataset(path, **kwargs)
         ds = ds.sel(
             latitude=slice(LAT_MAX, LAT_MIN),
             longitude=slice(LON_MIN, LON_MAX),
         )
         _ds_cache[key] = ds
     return _ds_cache[key]
-
-def _get_pl_ds(param):
-    key = f"pl_{param}"
-    if key not in _ds_cache:
-        ds = xr.open_dataset(
-            pl_path(param),
-            engine="cfgrib",
-            backend_kwargs={"indexpath": ""},
-            filter_by_keys={"typeOfLevel": "isobaricInhPa"},
-        )
-        ds = ds.sel(
-            latitude=slice(LAT_MAX, LAT_MIN),
-            longitude=slice(LON_MIN, LON_MAX),
-        )
-        _ds_cache[key] = ds
-    return _ds_cache[key]
-
-
-def _find_step_index(step_coord_values, step_h: int) -> int:
-    """Findet den Index des gewünschten Steps (Stunden) im step-Array.
-    Konvertiert alles nach Nanosekunden – funktioniert mit jeder timedelta64-Auflösung."""
-    target_ns = int(step_h) * 3_600_000_000_000
-    steps_ns  = step_coord_values.astype("timedelta64[ns]").astype(np.int64)
-    return int(np.argmin(np.abs(steps_ns - target_ns)))
 
 
 def read_sfc(param, step):
-    """Liest einen Oberflächenparameter für einen bestimmten Step (h).
-    Nutzt .isel() – kein Index auf der step-Koordinate nötig.
-    Funktioniert auch ohne step-Dimension (z.B. Orographie).
-    """
-    ds      = _get_sfc_ds(param)
-    varname = [v for v in ds.data_vars][0]
-    da      = ds[varname]
-    lats    = ds["latitude"].values
-    lons    = ds["longitude"].values
-
-    if "step" not in da.dims:
-        # Kein step → 2-D Feld direkt zurückgeben (z.B. z/Orographie)
-        return da.values, lats, lons
-
-    idx = _find_step_index(da["step"].values, step)
-    return da.isel(step=idx).values, lats, lons
+    """Liest Oberflächenparameter – eine Datei pro Step → immer 2-D."""
+    # Orographie: nur Step 0 vorhanden
+    actual_step = 0 if param == "z" else step
+    path = sfc_path(param, actual_step)
+    ds   = _open_grib(path)
+    var  = list(ds.data_vars)[0]
+    da   = ds[var]
+    # Step-Dim entfernen falls vorhanden (manchmal schreibt cfgrib sie trotzdem)
+    for dim in ["step", "valid_time", "time"]:
+        if dim in da.dims:
+            da = da.isel({dim: 0})
+    return da.values, ds["latitude"].values, ds["longitude"].values
 
 
 def read_pl(param, step):
-    """Liest einen Druckniveau-Parameter für einen bestimmten Step (h)."""
-    ds      = _get_pl_ds(param)
-    varname = [v for v in ds.data_vars][0]
-    da      = ds[varname]
-    levels  = ds["isobaricInhPa"].values
-    lats    = ds["latitude"].values
-    lons    = ds["longitude"].values
+    """Liest alle Druckniveaus eines Parameters für einen Step.
+    Liest jede Level-Datei einzeln und stapelt sie."""
+    arrays = []
+    levels_out = []
+    lats = lons = None
 
-    idx  = _find_step_index(da["step"].values, step)
-    data = da.isel(step=idx).values  # (level, lat, lon)
+    for level in sorted(PRESSURE_LEVELS):
+        path = pl_path(param, level, step)
+        if not os.path.exists(path):
+            continue
+        ds  = _open_grib(path, filter_keys={"typeOfLevel": "isobaricInhPa"})
+        var = list(ds.data_vars)[0]
+        da  = ds[var]
+        for dim in ["step", "valid_time", "time", "isobaricInhPa"]:
+            if dim in da.dims:
+                da = da.isel({dim: 0})
+        arrays.append(da.values)
+        levels_out.append(level)
+        if lats is None:
+            lats = ds["latitude"].values
+            lons = ds["longitude"].values
 
-    if levels[0] > levels[-1]:
-        sort_idx = np.argsort(levels)
-        levels   = levels[sort_idx]
-        data     = data[sort_idx]
+    data   = np.stack(arrays, axis=0)          # (nlev, nlat, nlon)
+    levels = np.array(levels_out, dtype=float)
 
-    return data, levels, lats, lons
+    # Aufsteigend sortieren (niedrigster Druck zuerst)
+    sort_idx = np.argsort(levels)
+    return data[sort_idx], levels[sort_idx], lats, lons
 
 
 def clear_cache():
-    """Cache leeren – kann zwischen Steps aufgerufen werden, um RAM freizugeben."""
     _ds_cache.clear()
 
 
 # -------------------------------------------------------
-# Meteorologische Hilfsfunktionen
+# Prüfung ob alle Dateien eines Steps vorhanden sind
+# -------------------------------------------------------
+def check_files(prev_step, step):
+    missing = []
+
+    for param in ["2t", "2d", "sp", "tp", "lsm", "mucape"]:
+        for s in [prev_step, step]:
+            p = sfc_path(param, s)
+            if not os.path.exists(p):
+                missing.append(p)
+
+    # tp brauchen wir für beide Steps (Differenz)
+    # z nur Step 0
+    if not os.path.exists(sfc_path("z", 0)):
+        missing.append(sfc_path("z", 0))
+
+    for param in ["t", "q", "r", "u", "v", "gh"]:
+        for level in PRESSURE_LEVELS:
+            p = pl_path(param, level, prev_step)
+            if not os.path.exists(p):
+                missing.append(p)
+
+    return missing
+
+
+# -------------------------------------------------------
+# Meteorologische Hilfsfunktionen  (unverändert)
 # -------------------------------------------------------
 def es_buck(T_K):
     Tc = T_K - 273.16
@@ -183,17 +184,14 @@ def calc_deg0l(t_pl, z_pl, levels):
         frac = t_bot / safe_dT
         height = z_bot + frac * (z_top - z_bot)
         deg0l = np.where(crossing, height, deg0l)
-    deg0l = np.where(np.isnan(deg0l), 0.0, deg0l)
-    return deg0l
+    return np.where(np.isnan(deg0l), 0.0, deg0l)
 
 def calc_mu_li(t_pl, z_pl, q_pl, levels, t2m, td2m, sp_Pa):
     sp_hPa = sp_Pa / 100.0
     idx_500 = np.argmin(np.abs(levels - 500.0))
     t_env_500 = t_pl[idx_500]
-
     q_sfc = np.clip(0.622 * es_buck(td2m) / (sp_hPa - es_buck(td2m)), 0.0, 0.06)
     theta_e_parcel = theta_ep_bolton(t2m, sp_hPa, q_sfc)
-
     Lv = 2.5e6
     T_guess = t_env_500.copy()
     for _ in range(6):
@@ -203,9 +201,7 @@ def calc_mu_li(t_pl, z_pl, q_pl, levels, t2m, td2m, sp_Pa):
         dtheta_dT = theta_e_guess / T_guess * (1.0 + Lv * q_sat_500 / (rd * T_guess))
         T_guess = T_guess + (theta_e_parcel - theta_e_guess) / np.maximum(dtheta_dT, 1e-6)
         T_guess = np.clip(T_guess, 200.0, 320.0)
-
-    mu_li = t_env_500 - T_guess
-    return np.clip(mu_li, -20.0, 20.0)
+    return np.clip(t_env_500 - T_guess, -20.0, 20.0)
 
 def calc_lcl_height(t2m, td2m):
     return np.maximum((t2m - td2m) * 125.0, 0.0)
@@ -226,10 +222,8 @@ def interpolate_to_height(z_3d, param_3d, target_z):
     p_bot = p2[np.arange(ngrid), idx_bot]
     p_top = p2[np.arange(ngrid), idx_top]
     dz = z_top - z_bot
-    frac = np.where(np.abs(dz) > 1.0, (tgt - z_bot) / dz, 0.5)
-    frac = np.clip(frac, 0.0, 1.0)
-    result = p_bot + frac * (p_top - p_bot)
-    return result.reshape(nlat, nlon)
+    frac = np.clip(np.where(np.abs(dz) > 1.0, (tgt - z_bot) / dz, 0.5), 0.0, 1.0)
+    return (p_bot + frac * (p_top - p_bot)).reshape(nlat, nlon)
 
 def calc_mean_wind_1_3km(z_3d, u_3d, v_3d, z_sfc):
     u_sum = np.zeros_like(z_sfc)
@@ -245,8 +239,7 @@ def calc_eff_bulk_shear(z_3d, u_3d, v_3d, z_sfc, cape):
     u_top = interpolate_to_height(z_3d, u_3d, z_sfc + 3000.0)
     v_top = interpolate_to_height(z_3d, v_3d, z_sfc + 3000.0)
     bs = np.sqrt((u_top - u_sfc) ** 2 + (v_top - v_sfc) ** 2)
-    bs = np.where(cape < 10.0, 0.0, bs)
-    return bs
+    return np.where(cape < 10.0, 0.0, bs)
 
 # -------------------------------------------------------
 # Hauptverarbeitung
@@ -254,29 +247,24 @@ def calc_eff_bulk_shear(z_3d, u_3d, v_3d, z_sfc, cape):
 def process_step_pair(prev_step, step):
     print(f"\n=== Verarbeite Step {prev_step}h → {step}h ===")
 
-    required = [
-        sfc_path("2t"), sfc_path("2d"), sfc_path("sp"),
-        sfc_path("tp"), sfc_path("lsm"),
-        sfc_path("mucape"), sfc_path("z"),
-        pl_path("t"), pl_path("q"), pl_path("r"),
-        pl_path("u"), pl_path("v"), pl_path("gh"),
-    ]
-    if not file_ok(*required):
-        missing = [p for p in required if not os.path.exists(p)]
-        print(f"  ⚠️ Fehlende Dateien ({len(missing)}), überspringe:")
-        for p in missing:
+    missing = check_files(prev_step, step)
+    if missing:
+        print(f"  ⚠️  {len(missing)} Dateien fehlen, überspringe:")
+        for p in missing[:5]:
             print(f"     {p}")
+        if len(missing) > 5:
+            print(f"     ... und {len(missing)-5} weitere")
         return
 
     # --- Felder lesen ---
-    t2m,    lats, lons = read_sfc("2t",     prev_step)
-    td2m,   _,    _    = read_sfc("2d",     prev_step)
-    sp,     _,    _    = read_sfc("sp",     prev_step)
-    tp0,    _,    _    = read_sfc("tp",     prev_step)
-    tp1,    _,    _    = read_sfc("tp",     step)
-    lsm,    _,    _    = read_sfc("lsm",    prev_step)
-    mucape, _,    _    = read_sfc("mucape", prev_step)
-    z_sfc_geo, _, _    = read_sfc("z",      0)         # Orographie immer Step 0
+    t2m,       lats, lons = read_sfc("2t",     prev_step)
+    td2m,      _,    _    = read_sfc("2d",     prev_step)
+    sp,        _,    _    = read_sfc("sp",     prev_step)
+    tp0,       _,    _    = read_sfc("tp",     prev_step)
+    tp1,       _,    _    = read_sfc("tp",     step)
+    lsm,       _,    _    = read_sfc("lsm",    prev_step)
+    mucape,    _,    _    = read_sfc("mucape", prev_step)
+    z_sfc_geo, _,    _    = read_sfc("z",      0)
     z_sfc = z_sfc_geo / g
 
     t_pl,  levels, _, _ = read_pl("t",  prev_step)
@@ -287,64 +275,58 @@ def process_step_pair(prev_step, step):
     v_pl,  _,      _, _ = read_pl("v",  prev_step)
     z_pl,  _,      _, _ = read_pl("gh", prev_step)
 
-    # --- Prädiktoren ---
+    # --- Prädiktoren berechnen ---
     rh_mean = calc_mean_rh(r_pl, levels)
 
     mcpr_raw = np.maximum((tp1 - tp0) / (step - prev_step), 0.0)
     cape_weight = np.clip(mucape / 100.0, 0.0, 1.0)
     mcpr = np.clip(mcpr_raw * cape_weight, 0.0, 0.00296)
 
-    print(f"  mcpr roh:            min={mcpr_raw.min():.6f}  max={mcpr_raw.max():.6f} m/h")
-    print(f"  mcpr nach Gewicht:   min={mcpr.min():.6f}  max={mcpr.max():.6f} m/h")
-    print(f"  mcpr >0 Pixel:       {(mcpr > 0).sum()} von {mcpr.size}")
-    print(f"  mcpr P90/P95/P99:    {np.percentile(mcpr,90):.6f} / {np.percentile(mcpr,95):.6f} / {np.percentile(mcpr,99):.6f}")
+    print(f"  mcpr roh:          min={mcpr_raw.min():.6f}  max={mcpr_raw.max():.6f} m/h")
+    print(f"  mcpr nach Gewicht: min={mcpr.min():.6f}  max={mcpr.max():.6f} m/h")
+    print(f"  mcpr >0 Pixel:     {(mcpr > 0).sum()} von {mcpr.size}")
 
-    mu_mixr = calc_mixr_2m(td2m, sp)
-    ml_lcl  = calc_lcl_height(t2m, td2m)
-    deg0l   = calc_deg0l(t_pl, z_pl, levels)
-    mu_li   = calc_mu_li(t_pl, z_pl, q_pl, levels, t2m, td2m, sp)
+    mu_mixr   = calc_mixr_2m(td2m, sp)
+    ml_lcl    = calc_lcl_height(t2m, td2m)
+    deg0l     = calc_deg0l(t_pl, z_pl, levels)
+    mu_li     = calc_mu_li(t_pl, z_pl, q_pl, levels, t2m, td2m, sp)
     mu_eff_bs = calc_eff_bulk_shear(z_pl, u_pl, v_pl, z_sfc, mucape)
-    mw_13   = calc_mean_wind_1_3km(z_pl, u_pl, v_pl, z_sfc)
-    sb_wmax = np.sqrt(np.maximum(2.0 * mucape, 0.0))
+    mw_13     = calc_mean_wind_1_3km(z_pl, u_pl, v_pl, z_sfc)
+    sb_wmax   = np.sqrt(np.maximum(2.0 * mucape, 0.0))
     mu_cape_m10 = np.maximum(mucape * 0.30, 0.0)
-    cin = np.full_like(t2m, np.nan)
-
-    print(f"  td2m:    min={td2m.min():.1f}  max={td2m.max():.1f} K")
-    print(f"  t2m:     min={t2m.min():.1f}  max={t2m.max():.1f} K")
-    print(f"  sp:      min={sp.min():.0f}  max={sp.max():.0f} Pa")
-    print(f"  MU_MIXR: min={mu_mixr.min():.2f}  max={mu_mixr.max():.2f} g/kg")
-    print(f"  RHmean:  min={rh_mean.min():.1f}  max={rh_mean.max():.1f} %")
-    print(f"  td2m 99. Perz.: {np.percentile(td2m, 99):.1f} K = {np.percentile(td2m, 99)-273.15:.1f}°C")
+    cin       = np.full_like(t2m, np.nan)
 
     predictors = {
-        "MU_LI":      mu_li,
-        "MU_CAPE":    mucape,
-        "MU_CAPE_M10":mu_cape_m10,
-        "SB_WMAX":    sb_wmax,
-        "CIN":        cin,
-        "RHmean":     rh_mean,
-        "MU_MIXR":    mu_mixr,
-        "ML_MIXR":    mu_mixr,
-        "ML_LCL":     ml_lcl,
-        "ZeroHeight": deg0l,
-        "mcpr":       mcpr,
-        "MU_EFF_BS":  mu_eff_bs,
-        "MW_13":      mw_13,
-        "lsm":        lsm,
-        "z_sfc":      z_sfc,
+        "MU_LI":       mu_li,
+        "MU_CAPE":     mucape,
+        "MU_CAPE_M10": mu_cape_m10,
+        "SB_WMAX":     sb_wmax,
+        "CIN":         cin,
+        "RHmean":      rh_mean,
+        "MU_MIXR":     mu_mixr,
+        "ML_MIXR":     mu_mixr,
+        "ML_LCL":      ml_lcl,
+        "ZeroHeight":  deg0l,
+        "mcpr":        mcpr,
+        "MU_EFF_BS":   mu_eff_bs,
+        "MW_13":       mw_13,
+        "lsm":         lsm,
+        "z_sfc":       z_sfc,
     }
 
     save_predictors(predictors, lats, lons, prev_step, step)
 
+    # Cache nach jedem Step-Paar leeren → RAM kontrollieren
+    clear_cache()
+
 # -------------------------------------------------------
-# Speichern mit Zeit-Koordinate
+# Speichern
 # -------------------------------------------------------
 def save_predictors(predictors, lats, lons, prev_step, step):
     outfile = os.path.join(
         OUTPUT_DIR,
         f"predictors_{date}_{run:02d}Z_step{prev_step:03d}-{step:03d}.nc"
     )
-
     run_time = datetime.strptime(f"{date}{run:02d}", "%Y%m%d%H")
     times = np.array([
         run_time + timedelta(hours=prev_step),
@@ -368,7 +350,7 @@ def save_predictors(predictors, lats, lons, prev_step, step):
             "interval_hours": step - prev_step,
             "source":         "ECMWF IFS Open Data",
             "created":        datetime.utcnow().isoformat(),
-            "notes":          "AR-CHaMo Prädiktoren v5 (bundled GRIB, Zeit-Koordinate, 3h Intervall)",
+            "notes":          "AR-CHaMo Prädiktoren v6 (per-step GRIB, Zeit-Koordinate, 3h Intervall)",
         },
     )
     ds.to_netcdf(outfile)
@@ -378,18 +360,15 @@ def save_predictors(predictors, lats, lons, prev_step, step):
 # Hauptprogramm
 # -------------------------------------------------------
 def main():
-    print("=== AR-CHaMo Prädiktor-Berechnung (v5 – bundled GRIB) ===")
+    print("=== AR-CHaMo Prädiktor-Berechnung (v6 – per-step GRIB) ===")
     print(f"Datum: {date}  Lauf: {run:02d} UTC")
     print(f"Eingabe: {BASE_DIR}/")
     print(f"Ausgabe: {OUTPUT_DIR}/")
-    print(f"Steps: {steps_all[0]}–{steps_all[-1]}h")
+    print(f"Steps: {steps_all[0]}–{steps_all[-1]}h alle 3h")
 
     for i in range(1, len(steps_all)):
-        prev_step = steps_all[i - 1]
-        step      = steps_all[i]
-        process_step_pair(prev_step, step)
+        process_step_pair(steps_all[i - 1], steps_all[i])
 
-    clear_cache()
     print("\n✅ Alle Steps verarbeitet!")
 
 if __name__ == "__main__":
