@@ -16,11 +16,10 @@ BASE = Path("data/gewitter")
 
 BUCKET = "ecmwf-forecasts"
 
-PRESSURE_LEVELS      = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
-PARAMS_SFC           = ["2t", "2d", "sp", "tp", "lsm", "mucape", "10u", "10v"]
-PARAMS_SFC_STEP0     = ["z"]
-PARAMS_PL            = ["t", "q", "r", "u", "v", "gh"]
-STEPS                = list(range(6, 145, 3))   # 0, 3, 6, … 48
+PRESSURE_LEVELS  = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
+PARAMS_SFC       = ["2t", "2d", "sp", "tp", "lsm", "mucape", "10u", "10v"]
+PARAMS_PL        = ["t", "q", "r", "u", "v", "gh"]
+STEPS            = list(range(6, 145, 3))   # 6, 9, 12, … 144
 
 # -------------------------------------------------------
 # Thread-lokaler S3-Client (thread-safe)
@@ -56,7 +55,6 @@ def get_fields_for_step(step):
 # Download eines einzelnen Byte-Range
 # -------------------------------------------------------
 def download_field(grib_key, field, out_path):
-    # Überspringen falls Datei bereits existiert
     if out_path.exists():
         return True, str(out_path), field["_length"]
 
@@ -74,11 +72,11 @@ def download_field(grib_key, field, out_path):
         return False, str(out_path), str(e)
 
 # -------------------------------------------------------
-# Tasks aufbauen
+# Tasks aufbauen – normale Steps (6-144)
 # -------------------------------------------------------
 def build_download_tasks(fields, step, step_str, prefix):
     grib_key = f"{prefix}/{DATE}000000-{step_str}-oper-fc.grib2"
-    step_tag = f"step{step:02d}"
+    step_tag = f"step{step:03d}"
     tasks    = []
 
     for param in PARAMS_SFC:
@@ -86,13 +84,6 @@ def build_download_tasks(fields, step, step_str, prefix):
             if field["param"] == param and field.get("levtype") == "sfc":
                 out = BASE / param / f"{param}_{step_tag}.grib2"
                 tasks.append((grib_key, field, out))
-
-    if step == 0:
-        for param in PARAMS_SFC_STEP0:
-            for field in fields:
-                if field["param"] == param:
-                    out = BASE / param / f"{param}_{step_tag}.grib2"
-                    tasks.append((grib_key, field, out))
 
     for param in PARAMS_PL:
         for level in PRESSURE_LEVELS:
@@ -114,7 +105,23 @@ def main():
     print(f"Ausgabe: {BASE}/\n")
 
     all_tasks = []
-    print(f"Indizes laden für {len(STEPS)} Steps ...")
+
+    # ── Orographie: einmalig Step 0 ──────────────────────────────
+    print("Lade Orographie (z) von Step 0 ...")
+    fields_0, _, prefix_0 = get_fields_for_step(0)
+    if fields_0 is not None:
+        grib_key_0 = f"{prefix_0}/{DATE}000000-0h-oper-fc.grib2"
+        for field in fields_0:
+            if field["param"] == "z":
+                out = BASE / "z" / "z_step000.grib2"
+                all_tasks.append((grib_key_0, field, out))
+                print(f"  z_step000.grib2 geplant")
+                break
+    else:
+        print("  ⚠️  Step 0 Index nicht verfügbar – z_step000.grib2 fehlt!")
+
+    # ── Alle anderen Parameter Steps 6-144 ───────────────────────
+    print(f"\nIndizes laden für Steps {STEPS[0]}-{STEPS[-1]}h ...")
     for step in STEPS:
         fields, step_str, prefix = get_fields_for_step(step)
         if fields is None:
