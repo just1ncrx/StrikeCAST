@@ -20,7 +20,7 @@ PRESSURE_LEVELS      = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 92
 PARAMS_SFC           = ["2t", "2d", "sp", "tp", "lsm", "mucape", "10u", "10v"]
 PARAMS_SFC_STEP0     = ["z"]
 PARAMS_PL            = ["t", "q", "r", "u", "v", "gh"]
-STEPS                = list(range(0, 49, 3))   # 0, 3, 6, … 48
+STEPS                = list(range(6, 145, 3))   # 0, 3, 6, … 48
 
 # -------------------------------------------------------
 # Thread-lokaler S3-Client (thread-safe)
