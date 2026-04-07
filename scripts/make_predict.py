@@ -18,7 +18,7 @@ BASE_DIR   = os.path.join("data", "gewitter")
 OUTPUT_DIR = os.path.join("data", "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-steps_all = list(range(6, 55, 3))   # 6, 9, 12, … 144
+steps_all = list(range(6, 58, 3))   # 6, 9, 12, … 144
 
 g   = 9.80665
 rd  = 287.04
