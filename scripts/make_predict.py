@@ -234,6 +234,52 @@ def calc_eff_bulk_shear(z_3d, u_3d, v_3d, z_sfc, cape):
     bs = np.sqrt((u_top - u_sfc) ** 2 + (v_top - v_sfc) ** 2)
     return np.where(cape < 10.0, 0.0, bs)
 
+def calc_srh(u_pl, v_pl, z_pl, z_sfc, levels, layer_m=3000):
+    """
+    Storm-Relative Helicity 0–3 km AGL.
+    Sturmvektor nach vereinfachtem Bunkers-Ansatz: fester Vektor (7.5, 7.5) m/s.
+    Vorzeichen: positiv = zyklonale SRH (Nordhalbkugel-Konvention).
+    """
+    u_storm = 7.5   # m/s
+    v_storm = 7.5   # m/s
+
+    srh = np.zeros_like(z_sfc)
+    nlev = len(levels)
+
+    for k in range(nlev - 1):
+        z_bot = z_pl[k]      # (nlat, nlon) – Geopotentialhöhe in Metern
+        z_top = z_pl[k + 1]
+
+        # Beide Schichten müssen innerhalb der 0–layer_m-Schicht AGL liegen
+        in_layer = (
+            (z_bot - z_sfc < layer_m) &
+            (z_top - z_sfc < layer_m) &
+            (z_bot - z_sfc >= 0.0) &
+            (z_top - z_sfc >= 0.0)
+        )
+
+        du1 = u_pl[k]     - u_storm
+        dv1 = v_pl[k]     - v_storm
+        du2 = u_pl[k + 1] - u_storm
+        dv2 = v_pl[k + 1] - v_storm
+
+        # Kreuzprodukt (skalare z-Komponente) → SRH-Beitrag dieser Schicht
+        srh += np.where(in_layer, du1 * dv2 - du2 * dv1, 0.0)
+
+    return srh
+
+def calc_stp(mucape, ml_lcl, srh, mu_eff_bs):
+    """
+    Significant Tornado Parameter (Thompson et al. 2004, vereinfacht).
+      STP = (CAPE/1500) * ((2000-LCL)/1000) * (SRH/150) * (BS/20)
+    Alle Terme werden auf >= 0 geclippt; STP wird ebenfalls auf >= 0 begrenzt.
+    """
+    cape_term = np.clip(mucape / 1500.0, 0.0, None)
+    lcl_term  = np.clip((2000.0 - ml_lcl) / 1000.0, 0.0, None)
+    srh_term  = np.clip(srh / 150.0, 0.0, None)
+    bs_term   = np.clip(mu_eff_bs / 20.0, 0.0, None)
+    return np.clip(cape_term * lcl_term * srh_term * bs_term, 0.0, None)
+
 # -------------------------------------------------------
 # Hauptverarbeitung
 # -------------------------------------------------------
@@ -285,6 +331,8 @@ def process_step_pair(prev_step, step):
     sb_wmax     = np.sqrt(np.maximum(2.0 * mucape, 0.0))
     mu_cape_m10 = np.maximum(mucape * 0.30, 0.0)
     cin         = np.full_like(t2m, np.nan)
+    srh       = calc_srh(u_pl, v_pl, z_pl, z_sfc, levels, layer_m=3000)
+    stp       = calc_stp(mucape, ml_lcl, srh, mu_eff_bs)
 
     predictors = {
         "MU_LI":       mu_li,
@@ -302,6 +350,7 @@ def process_step_pair(prev_step, step):
         "MW_13":       mw_13,
         "lsm":         lsm,
         "z_sfc":       z_sfc,
+        "STP":         stp,   # NEU: Significant Tornado Parameter  [-]
     }
 
     save_predictors(predictors, lats, lons, prev_step, step)
