@@ -18,7 +18,7 @@ from collections import defaultdict
 
 PRED_DIR      = "data/output"
 LUT_HAIL_PATH = "data/lut/hail2cm_lut.nc"
-OUT_DIR       = "pngs/hagel"
+OUT_DIR       = "pngs/hail2cm"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 
@@ -292,7 +292,7 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
 
     footer_ax.text(
         0.01, 0.85,
-        f"Hagelwahrscheinlichkeit (>=2cm), {interval_hours}Std\n{run_str}",
+        f"Hagelwahrscheinlichkeit (>2cm), {interval_hours}Std (%)\n{run_str}",
         fontsize=12, fontweight="bold", va="top", ha="left",
     )
     footer_ax.text(
