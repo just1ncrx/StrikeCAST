@@ -53,6 +53,8 @@ jobs:
           mkdir -p data/lut
           curl -L https://github.com/just1ncrx/StrikeCAST/releases/download/v1.0/lightning_lut.nc \
                -o data/lut/lightning_lut.nc
+          curl -L https://github.com/just1ncrx/StrikeCAST/releases/download/v1.0/hail2cm_lut.nc \
+               -o data/lut/hail2cm_lut.nc
 
       - name: Download ECMWF data
         run: |
@@ -63,14 +65,16 @@ jobs:
 
       - name: Generate PNGs
         run: |
-          mkdir -p pngs/gewitter
-          python scripts/generate_pngs.py
+          mkdir -p pngs/gewitter pngs/hail2cm pngs/tornado
+          python scripts/generate_gewitter.py
+          python scripts/generate_hail2cm.py
+          python scripts/generate_tornado.py
 
       - name: Upload PNGs artifact
         uses: actions/upload-artifact@v6
         with:
           name: strikecast-pngs
-          path: pngs/gewitter/
+          path: pngs/
           retention-days: 1
 
 
@@ -97,12 +101,14 @@ jobs:
         uses: actions/download-artifact@v6
         with:
           name: strikecast-pngs
-          path: pngs/gewitter/
+          path: pngs/
 
       - name: Generate metadata
         run: |
           python scripts/generate_metadata.py \
             pngs/gewitter \
+            pngs/hail2cm \
+            pngs/tornado \
             ${{ needs.strikecast.outputs.run }} \
             ${{ needs.strikecast.outputs.date }}
 
@@ -128,6 +134,14 @@ jobs:
           RUN="${{ needs.strikecast.outputs.run }}"
           aws s3 sync pngs/gewitter/ \
             s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/gewitter/ \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+          aws s3 sync pngs/hail2cm/ \
+            s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/hail2cm/ \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+          aws s3 sync pngs/tornado/ \
+            s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/tornado/ \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
           aws s3 cp pngs/metadata.json \
