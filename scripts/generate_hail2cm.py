@@ -288,7 +288,7 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
     ])
     footer_ax.axis("off")
 
-    run_str = f"HailCAST ({run_label}), CRX"
+    run_str = f"StrikeCAST ({run_label}), CRX"
 
     footer_ax.text(
         0.01, 0.85,
