@@ -22,7 +22,7 @@ BUCKET = "ecmwf-forecasts"
 PRESSURE_LEVELS  = [50, 100, 150, 200, 250, 300, 400, 500, 600, 700, 850, 925, 1000]
 PARAMS_SFC       = ["2t", "2d", "sp", "tp", "lsm", "mucape", "10u", "10v"]
 PARAMS_PL        = ["t", "q", "r", "u", "v", "gh"]
-STEPS            = list(range(6, 145, 3))
+STEPS            = list(range(6, 55, 3))
 
 MAX_WORKERS      = 4
 DOWNLOAD_RETRIES = 8
