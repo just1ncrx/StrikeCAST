@@ -15,6 +15,8 @@ import matplotlib.patheffects as path_effects
 import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
 from collections import defaultdict
+from scipy.ndimage import uniform_filter
+from generate_gewitter import compute_probability as compute_lightning_probability, lut as lut_lightning
 
 PRED_DIR      = "data/output"
 LUT_HAIL_PATH = "data/lut/hail2cm_lut.nc"
@@ -365,6 +367,8 @@ def main():
             ds_start   = ds.isel(time=0, drop=True)
             ds_start   = ds_start.isel(latitude=lat_idx, longitude=lon_idx)
             prob       = compute_hail_probability(ds_start, lut_hail, interval_hours=interval_hours)
+            prob_lightning = compute_lightning_probability(ds_start, lut_lightning, interval_hours=interval_hours)
+            prob = prob * (prob_lightning / 100.0)
             valid_from = pd.Timestamp(prev_time)
             valid_to   = pd.Timestamp(step_time)
 
@@ -373,6 +377,8 @@ def main():
             ds_start   = ds.isel(time=0, drop=True) if "time" in ds.dims else ds
             ds_start   = ds_start.isel(latitude=lat_idx, longitude=lon_idx)
             prob       = compute_hail_probability(ds_start, lut_hail, interval_hours=interval_hours)
+            prob_lightning = compute_lightning_probability(ds_start, lut_lightning, interval_hours=interval_hours)
+            prob = prob * (prob_lightning / 100.0)
             time_val   = ds["time"].values[0] if "time" in ds.dims else None
 
             if time_val is not None:
