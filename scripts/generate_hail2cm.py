@@ -368,8 +368,10 @@ def main():
             ds_start   = ds_start.isel(latitude=lat_idx, longitude=lon_idx)
             prob       = compute_hail_probability(ds_start, lut_hail, interval_hours=interval_hours)
             prob_lightning = compute_lightning_probability(ds_start, lut_lightning, interval_hours=interval_hours)
-            prob = np.where(prob_lightning > 0, prob, 0.0)
-            prob = uniform_filter(prob, size=3, mode="nearest")
+            lightning_mask = prob_lightning >= 1.0
+            prob = np.where(lightning_mask, prob, 0.0)
+            prob_filtered = uniform_filter(prob, size=3, mode="nearest")
+            prob = np.where(lightning_mask, prob_filtered, 0.0)
             valid_from = pd.Timestamp(prev_time)
             valid_to   = pd.Timestamp(step_time)
 
