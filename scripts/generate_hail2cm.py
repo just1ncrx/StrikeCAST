@@ -188,6 +188,7 @@ def compute_hail_probability(ds2d, lut, interval_hours=1):
     # Intervall-Skalierung ZULETZT
     ih            = max(1, int(interval_hours))
     prob_interval = 1.0 - np.power(1.0 - prob, ih)
+    prob_interval = uniform_filter(prob_interval, size=3, mode="nearest")
     return np.clip(prob_interval * 100.0, 0.0, 100.0)
 
 
@@ -368,7 +369,7 @@ def main():
             ds_start   = ds_start.isel(latitude=lat_idx, longitude=lon_idx)
             prob       = compute_hail_probability(ds_start, lut_hail, interval_hours=interval_hours)
             prob_lightning = compute_lightning_probability(ds_start, lut_lightning, interval_hours=interval_hours)
-            prob = prob * (prob_lightning / 100.0)
+            prob = np.where(prob_lightning > 0, prob, 0.0)
             valid_from = pd.Timestamp(prev_time)
             valid_to   = pd.Timestamp(step_time)
 
@@ -378,7 +379,7 @@ def main():
             ds_start   = ds_start.isel(latitude=lat_idx, longitude=lon_idx)
             prob       = compute_hail_probability(ds_start, lut_hail, interval_hours=interval_hours)
             prob_lightning = compute_lightning_probability(ds_start, lut_lightning, interval_hours=interval_hours)
-            prob = prob * (prob_lightning / 100.0)
+            prob = np.where(prob_lightning > 0, prob, 0.0)
             time_val   = ds["time"].values[0] if "time" in ds.dims else None
 
             if time_val is not None:
