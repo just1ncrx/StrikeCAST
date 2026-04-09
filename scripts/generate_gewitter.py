@@ -183,7 +183,7 @@ def compute_probability(ds2d, lut, interval_hours=1):
     if "z_sfc" in ds2d:
         z = ds2d["z_sfc"].values
         z_max = maximum_filter(z, size=2, mode="nearest")
-        orog_weight = np.clip(1.0 - (z_max - 600.0) / 900.0, 0.0, 1.0)
+        orog_weight = np.clip(1.0 - (z_max - 800.0) / 700.0, 0.0, 1.0)
     prob = prob * orog_weight
 
     # --- Debug: Ausreißer diagnostizieren ---
