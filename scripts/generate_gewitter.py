@@ -13,7 +13,7 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.patheffects as path_effects
 import pandas as pd
-from scipy.ndimage import uniform_filter
+from scipy.ndimage import gaussian_filter
 from scipy.interpolate import RegularGridInterpolator
 
 PRED_DIR = "data/output"
@@ -204,7 +204,7 @@ def compute_probability(ds2d, lut, interval_hours=1):
     # Intervall-Skalierung ZULETZT
     ih = max(1, int(interval_hours))
     prob_interval = 1.0 - np.power(1.0 - prob, ih)
-    prob_interval = uniform_filter(prob_interval, size=3, mode="nearest")
+    #prob_interval = uniform_filter(prob_interval, size=3, mode="nearest")
     return np.clip(prob_interval * 100.0, 0.0, 100.0)
 
 
@@ -248,6 +248,13 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
         (lats[:, 0], lons[0, :]), prob, method="linear", bounds_error=False, fill_value=0.0
     )
     prob_plot = interp((lat2d_new, lon2d_new))
+    prob_plot = np.clip(prob_plot, 0.0, 100.0)
+
+    # Gaußscher Glättungsfilter (~40 km Radius = sigma)
+    km_per_pixel = target_res * 111.0
+    sigma_px = 40.0 / km_per_pixel          # ≈ 14 Pixel
+    prob_plot = gaussian_filter(prob_plot, sigma=sigma_px, mode="nearest")
+
     prob_plot = np.clip(prob_plot, 0.0, 100.0)
     lats, lons = lat2d_new, lon2d_new
 
