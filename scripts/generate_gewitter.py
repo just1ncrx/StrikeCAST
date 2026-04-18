@@ -237,7 +237,7 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
     norm = BoundaryNorm(bounds, cmap.N)
 
     # --- Interpolation auf feineres Gitter ---
-    target_res = 0.025
+    target_res = 0.01
     lon_min, lon_max = np.min(lons), np.max(lons)
     lat_min, lat_max = np.min(lats), np.max(lats)
     lon_new = np.arange(lon_min, lon_max + target_res, target_res)
