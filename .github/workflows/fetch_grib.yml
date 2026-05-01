@@ -56,6 +56,10 @@ jobs:
           curl -L https://github.com/just1ncrx/StrikeCAST/releases/download/v1.0/hail2cm_lut.nc \
                -o data/lut/hail2cm_lut.nc
 
+      - name: Download Z
+        run: |
+          mkdir -p data/gewitter/z
+
       - name: Download ECMWF data
         run: |
           python download/download_all.py
