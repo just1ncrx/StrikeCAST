@@ -59,14 +59,28 @@ def get_fields_for_step(step):
     step_str = f"{step}h"
     prefix   = f"{DATE}/{RUN}/ifs/0p25/oper"
     idx_key  = f"{prefix}/{DATE}{RUN_HHMM}-{step_str}-oper-fc.index"
-    try:
-        s3    = get_client()
-        obj   = s3.get_object(Bucket=BUCKET, Key=idx_key)
-        lines = obj["Body"].read().decode("utf-8").strip().splitlines()
-        return [json.loads(l) for l in lines], step_str, prefix
-    except Exception as e:
-        print(f"  ✗ Index nicht gefunden: {idx_key} ({e})")
-        return None, step_str, prefix
+    
+    for attempt in range(8):
+        try:
+            s3    = get_client()
+            obj   = s3.get_object(Bucket=BUCKET, Key=idx_key)
+            lines = obj["Body"].read().decode("utf-8").strip().splitlines()
+            return [json.loads(l) for l in lines], step_str, prefix
+        except Exception as e:
+            err_str = str(e)
+            is_throttle = any(kw in err_str for kw in (
+                "SlowDown", "503", "reduce your request rate",
+                "RequestThrottled", "Throttling"
+            ))
+            if is_throttle and attempt < 7:
+                wait = min(BACKOFF_BASE * (2 ** attempt), BACKOFF_MAX)
+                wait = random.uniform(0, wait)
+                print(f"  ⏳ Index Throttle ({attempt+1}/8) – warte {wait:.1f}s: {idx_key}")
+                time.sleep(wait)
+                continue
+            print(f"  ✗ Index nicht gefunden: {idx_key} ({e})")
+            return None, step_str, prefix
+    return None, step_str, prefix
 
 # -------------------------------------------------------
 # Download eines einzelnen Byte-Range  –  mit Backoff
