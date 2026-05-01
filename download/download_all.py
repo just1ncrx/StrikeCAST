@@ -45,7 +45,7 @@ def get_client():
                 config=Config(
                     signature_version=UNSIGNED,
                     retries={
-                        "max_attempts": 3,   # nur kurze botocore-Retries; Hauptlogik unten
+                        "max_attempts": 3,
                         "mode": "adaptive"
                     }
                 )
@@ -102,16 +102,14 @@ def download_field(grib_key, field, out_path):
             last_attempt = (attempt == DOWNLOAD_RETRIES - 1)
 
             if is_throttle and not last_attempt:
-                # Exponential Backoff mit vollem Jitter
                 wait = min(BACKOFF_BASE * (2 ** attempt), BACKOFF_MAX)
-                wait = random.uniform(0, wait)          # Full-Jitter
+                wait = random.uniform(0, wait)
                 print(f"  ⏳ Throttle ({attempt+1}/{DOWNLOAD_RETRIES}) "
                       f"– warte {wait:.1f}s: {out_path.name}")
                 time.sleep(wait)
                 continue
 
             if not last_attempt:
-                # Anderer Fehler (Netzwerk etc.) – kurze Pause, dann retry
                 time.sleep(random.uniform(1, 3))
                 continue
 
@@ -154,20 +152,7 @@ def main():
 
     all_tasks = []
 
-    print("Lade Orographie (z) von Step 0 ...")
-    fields_0, _, prefix_0 = get_fields_for_step(0)
-    if fields_0 is not None:
-        grib_key_0 = f"{prefix_0}/{DATE}{RUN_HHMM}-0h-oper-fc.grib2"
-        for field in fields_0:
-            if field["param"] == "z":
-                out = BASE / "z" / "z_step000.grib2"
-                all_tasks.append((grib_key_0, field, out))
-                print(f"  z_step000.grib2 geplant")
-                break
-    else:
-        print("  ⚠️  Step 0 Index nicht verfügbar – z_step000.grib2 fehlt!")
-
-    print(f"\nIndizes laden für Steps {STEPS[0]}-{STEPS[-1]}h ...")
+    print(f"Indizes laden für Steps {STEPS[0]}-{STEPS[-1]}h ...")
     for step in STEPS:
         fields, step_str, prefix = get_fields_for_step(step)
         if fields is None:
