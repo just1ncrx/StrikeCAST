@@ -301,6 +301,27 @@ def calc_stp(mucape, ml_lcl, srh, mu_eff_bs):
     stp = cape_term * lcl_term * srh_term * bs_term
     return np.clip(stp, 0.0, None)
 
+def calc_scp(mucape, eff_bs, srh):
+    """
+    Supercell Composite Parameter – Thompson et al. (2004).
+    SCP = (MUCAPE/1000) * (EffShear/20) * (EffSRH/50)
+
+    mucape  : J/kg
+    eff_bs  : Effective Bulk Shear 0–3 km [m/s]
+    srh     : Storm-Relative Helicity 0–3 km [m²/s²]
+
+    SCP > 1  → Superzellpotenzial vorhanden
+    SCP > 4  → deutliches Superzellpotenzial
+    SCP > 8  → signifikante Superzelle wahrscheinlich
+    """
+    cape_term = np.clip(mucape / 1000.0, 0.0, None)
+    shear_term = np.clip(eff_bs / 20.0,  0.0, None)
+    srh_term  = np.clip(srh    / 50.0,   0.0, None)   # nur positive SRH
+
+    scp = cape_term * shear_term * srh_term
+    return np.clip(scp, 0.0, None)
+
+
 # -------------------------------------------------------
 # Hauptverarbeitung
 # -------------------------------------------------------
@@ -360,8 +381,9 @@ def process_step_pair(prev_step, step):
     sb_wmax     = np.sqrt(np.maximum(2.0 * mucape, 0.0))
     mu_cape_m10 = np.maximum(mucape * 0.30, 0.0)
     cin         = np.full_like(t2m, np.nan)
-    srh       = calc_srh(u_pl, v_pl, z_pl, z_sfc, levels, layer_m=3000)
-    stp       = calc_stp(mucape, ml_lcl, srh, mu_eff_bs)
+    srh         = calc_srh(u_pl, v_pl, z_pl, z_sfc, levels, layer_m=3000)
+    stp         = calc_stp(mucape, ml_lcl, srh, mu_eff_bs)
+    scp         = calc_scp(mucape, mu_eff_bs, srh)
 
     predictors = {
         "MU_LI":       mu_li,
@@ -380,6 +402,7 @@ def process_step_pair(prev_step, step):
         "lsm":         lsm,
         "z_sfc":       z_sfc,
         "STP":         stp,   # NEU: Significant Tornado Parameter  [-]
+        "SCP":         scp,
     }
 
     save_predictors(predictors, lats, lons, prev_step, step)
