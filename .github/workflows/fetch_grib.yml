@@ -71,10 +71,11 @@ jobs:
 
       - name: Generate PNGs
         run: |
-          mkdir -p pngs/gewitter pngs/hail2cm pngs/tornado
+          mkdir -p pngs/gewitter pngs/hail2cm pngs/tornado pngs/supercell
           python scripts/generate_gewitter.py
           python scripts/generate_hail2cm.py
           python scripts/generate_tornado.py
+          python scripts/generate_supercell.py
 
       - name: Upload PNGs artifact
         uses: actions/upload-artifact@v6
@@ -145,6 +146,10 @@ jobs:
 
           aws s3 sync pngs/tornado/ \
             s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/tornado/ \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+          aws s3 sync pngs/supercell/ \
+            s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/supercell/ \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
           aws s3 cp pngs/metadata.json \
