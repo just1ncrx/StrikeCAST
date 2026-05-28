@@ -153,7 +153,7 @@ def compute_hail_probability(ds2d, lut, interval_hours=1):
     prob = np.nan_to_num(prob, nan=0.0)
     prob = np.clip(prob, 0.0, 1.0)
 
-    HAIL_GAMMA = 0.4  # < 1.0 hebt niedrige Werte an, 0.5–0.7 testen
+    HAIL_GAMMA = 0.6  # < 1.0 hebt niedrige Werte an, 0.5–0.7 testen
     prob = np.power(prob, HAIL_GAMMA)
 
 
