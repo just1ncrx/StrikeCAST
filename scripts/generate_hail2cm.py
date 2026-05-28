@@ -16,6 +16,7 @@ import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
 from collections import defaultdict
 from scipy.ndimage import uniform_filter
+from scipy.ndimage import gaussian_filter
 from generate_gewitter import compute_probability as compute_lightning_probability, lut as lut_lightning
 
 PRED_DIR      = "data/output"
@@ -152,24 +153,9 @@ def compute_hail_probability(ds2d, lut, interval_hours=1):
     prob = np.nan_to_num(prob, nan=0.0)
     prob = np.clip(prob, 0.0, 1.0)
 
-    # Physikalischer Guard: kein CAPE -> kein Hagel
-    # unter 200 J/kg dämpfen, darunter -> 0
-    cape_raw    = ds2d["MU_CAPE_M10"].values
-    cape_weight = np.clip(cape_raw / 200.0, 0.0, 1.0)
-    prob       *= cape_weight
+    HAIL_GAMMA = 0.4  # < 1.0 hebt niedrige Werte an, 0.5–0.7 testen
+    prob = np.power(prob, HAIL_GAMMA)
 
-    # Nullgradgrenze zu tief -> großer Hagel unwahrscheinlicher
-    # unter 1500m -> 0, zwischen 1500-2000m -> linear auf 1
-    zh_raw    = ds2d["ZeroHeight"].values
-    zh_weight = np.clip((zh_raw - 1500.0) / 500.0, 0.0, 1.0)
-    prob     *= zh_weight
-
-    # Orographie-Maske
-    if "z_sfc" in ds2d:
-        z         = ds2d["z_sfc"].values
-        z_max     = maximum_filter(z, size=2, mode="nearest")
-        orog_weight = np.clip(1.0 - (z_max - 600.0) / 900.0, 0.0, 1.0)
-        prob     *= orog_weight
 
     # --- Debug: Ausreißer diagnostizieren ---
     high_mask = prob > 0.3
@@ -217,7 +203,7 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
     norm = BoundaryNorm(bounds, cmap.N)
 
     # --- Interpolation auf feineres Gitter ---
-    target_res = 0.025
+    target_res = 0.015
     lon_min, lon_max = np.min(lons), np.max(lons)
     lat_min, lat_max = np.min(lats), np.max(lats)
     lon_new = np.arange(lon_min, lon_max + target_res, target_res)
@@ -229,6 +215,13 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
     )
     prob_plot = interp((lat2d_new, lon2d_new))
     prob_plot = np.clip(prob_plot, 0.0, 100.0)
+                 
+    # Gaußscher Glättungsfilter (~40 km Radius = sigma)
+    km_per_pixel = target_res * 111.0
+    sigma_px = 40.0 / km_per_pixel          # ≈ 14 Pixel
+    prob_plot = gaussian_filter(prob_plot, sigma=sigma_px, mode="nearest")
+    prob_plot = np.clip(prob_plot, 0.0, 100.0)
+    
     lats, lons = lat2d_new, lon2d_new
 
     # --- Figurenmaße ---
