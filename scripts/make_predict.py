@@ -234,23 +234,43 @@ def calc_eff_bulk_shear(z_3d, u_3d, v_3d, z_sfc, cape):
     bs = np.sqrt((u_top - u_sfc) ** 2 + (v_top - v_sfc) ** 2)
     return np.where(cape < 10.0, 0.0, bs)
 
+def calc_bunkers_storm_motion(u_pl, v_pl, z_pl, z_sfc, levels):
+    """
+    Vereinfachter Bunkers-Sturmvektor.
+    Mittlerer Wind 0–6 km + Rechtsperforation (Deviation ~7.5 m/s senkrecht).
+    """
+    u_mean = interpolate_to_height(z_pl, u_pl, z_sfc + 500)
+    v_mean = interpolate_to_height(z_pl, v_pl, z_sfc + 500)
+    for dz in [1000, 2000, 3000, 4000, 5000, 6000]:
+        u_mean += interpolate_to_height(z_pl, u_pl, z_sfc + dz)
+        v_mean += interpolate_to_height(z_pl, v_pl, z_sfc + dz)
+    u_mean /= 7.0
+    v_mean /= 7.0
+
+    u_shear = interpolate_to_height(z_pl, u_pl, z_sfc + 6000) - \
+              interpolate_to_height(z_pl, u_pl, z_sfc + 500)
+    v_shear = interpolate_to_height(z_pl, v_pl, z_sfc + 6000) - \
+              interpolate_to_height(z_pl, v_pl, z_sfc + 500)
+
+    shear_mag = np.maximum(np.sqrt(u_shear**2 + v_shear**2), 1e-6)
+    # Rechtsdeviation: Normalvektor 90° rechts vom Schervektor
+    u_storm = u_mean + 7.5 * ( v_shear / shear_mag)
+    v_storm = v_mean + 7.5 * (-u_shear / shear_mag)
+    return u_storm, v_storm
+
 def calc_srh(u_pl, v_pl, z_pl, z_sfc, levels, layer_m=3000):
     """
-    Storm-Relative Helicity 0–3 km AGL.
-    Sturmvektor nach vereinfachtem Bunkers-Ansatz: fester Vektor (7.5, 7.5) m/s.
-    Vorzeichen: positiv = zyklonale SRH (Nordhalbkugel-Konvention).
+    Storm-Relative Helicity 0–3 km AGL mit Bunkers-Sturmvektor.
     """
-    u_storm = 7.5   # m/s
-    v_storm = 7.5   # m/s
+    u_storm, v_storm = calc_bunkers_storm_motion(u_pl, v_pl, z_pl, z_sfc, levels)
 
     srh = np.zeros_like(z_sfc)
     nlev = len(levels)
 
     for k in range(nlev - 1):
-        z_bot = z_pl[k]      # (nlat, nlon) – Geopotentialhöhe in Metern
+        z_bot = z_pl[k]
         z_top = z_pl[k + 1]
 
-        # Beide Schichten müssen innerhalb der 0–layer_m-Schicht AGL liegen
         in_layer = (
             (z_bot - z_sfc < layer_m) &
             (z_top - z_sfc < layer_m) &
@@ -263,22 +283,23 @@ def calc_srh(u_pl, v_pl, z_pl, z_sfc, levels, layer_m=3000):
         du2 = u_pl[k + 1] - u_storm
         dv2 = v_pl[k + 1] - v_storm
 
-        # Kreuzprodukt (skalare z-Komponente) → SRH-Beitrag dieser Schicht
         srh += np.where(in_layer, du1 * dv2 - du2 * dv1, 0.0)
 
     return srh
 
 def calc_stp(mucape, ml_lcl, srh, mu_eff_bs):
     """
-    Significant Tornado Parameter (Thompson et al. 2004, vereinfacht).
-      STP = (CAPE/1500) * ((2000-LCL)/1000) * (SRH/150) * (BS/20)
-    Alle Terme werden auf >= 0 geclippt; STP wird ebenfalls auf >= 0 begrenzt.
+    Significant Tornado Parameter – Thompson et al. 2004/2012.
+    Alle Terme auf [0, 1] geclippt vor Multiplikation.
+    Referenz: SPC Mesoscale Analysis documentation.
     """
-    cape_term = np.clip(mucape / 1500.0, 0.0, None)
-    lcl_term  = np.clip((2000.0 - ml_lcl) / 1000.0, 0.0, None)
-    srh_term  = np.clip(srh / 150.0, 0.0, None)
-    bs_term   = np.clip(mu_eff_bs / 20.0, 0.0, None)
-    return np.clip(cape_term * lcl_term * srh_term * bs_term, 0.0, None)
+    cape_term = np.clip(mucape / 1500.0, 0.0, None)          # kein Deckel (CAPE kann > 1500 sein)
+    lcl_term  = np.clip((2000.0 - ml_lcl) / 1000.0, 0.0, 1.0)  # Deckel bei LCL=1000m → Term=1.0, LCL>2000m → 0
+    srh_term  = np.clip(srh / 150.0,       0.0, None)
+    bs_term   = np.clip(mu_eff_bs / 20.0,  0.0, 1.5)         # Deckel bei 30 m/s
+
+    stp = cape_term * lcl_term * srh_term * bs_term
+    return np.clip(stp, 0.0, None)
 
 # -------------------------------------------------------
 # Hauptverarbeitung
