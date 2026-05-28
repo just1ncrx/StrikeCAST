@@ -193,11 +193,11 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
     """
 
     # --- Diskrete Colormap in 5%-Schritten ---
-    bounds = [0,1,2,5,10,20,30,40,50,60,70,80,90,95,98,100]
+    bounds = [0, 1, 5, 10, 20, 30, 40, 50, 60, 70, 80, 90, 99]
     colors = [
-        "#056B6F","#079833","#08B015","#40C50C","#7DD608",
-        "#9BE105","#BBEA04","#DBF402","#FFF600","#FEDC00",
-        "#FFAD00","#FF6300","#E50014","#BC0035","#930058","#660179"
+        "#FE9226", "#FFC02B", "#FFEE32", "#DDE02D", "#BBD629",
+        "#9AC925", "#79BC21", "#37A319", "#367C40",
+        "#366754", "#4A3E7C", "#593192"
     ]
     cmap = ListedColormap(colors)
     norm = BoundaryNorm(bounds, cmap.N)
