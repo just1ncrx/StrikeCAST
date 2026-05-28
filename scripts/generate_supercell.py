@@ -273,7 +273,7 @@ def main():
 
         print(f"Processing {f}")
 
-    scp = extract_scp(ds_start)
+        scp = extract_scp(ds_start)
         print(f"  SCP: min={scp.min():.3f}  max={scp.max():.3f}  mean={scp.mean():.3f}")
 
         # Ausgabepfad
