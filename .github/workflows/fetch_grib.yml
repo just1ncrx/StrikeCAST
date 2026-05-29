@@ -43,7 +43,12 @@ jobs:
             19|20|21|22) RUN=12 ;;
             01|02|03|04) RUN=18 ;;
           esac
-          DATE=$(date -u +%Y%m%d)
+
+          if [ "$RUN" = "18" ]; then
+            DATE=$(date -u -d "yesterday" +%Y%m%d)
+          else
+            DATE=$(date -u +%Y%m%d)
+          fi
           # set env variables
           echo "RUN=$RUN" >> $GITHUB_ENV
           echo "DATE=$DATE" >> $GITHUB_ENV
