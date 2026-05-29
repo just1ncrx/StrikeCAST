@@ -6,15 +6,24 @@ import os
 import time
 import random
 import threading
+from datetime import datetime, timedelta
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # -------------------------------------------------------
 # Konfiguration via Umgebungsvariablen (GitHub Actions)
 # -------------------------------------------------------
-DATE = os.getenv("DATE", "20250604")
-RUN  = f"{int(os.getenv('RUN', 0)):02d}z"
-RUN_HHMM = f"{int(os.getenv('RUN', 0)):02d}0000"
+DATE_ENV = os.getenv("DATE", "20250604")
+RUN_INT  = int(os.getenv("RUN", 0))
+
+if RUN_INT == 18:
+    d = datetime.strptime(DATE_ENV, "%Y%m%d") - timedelta(days=1)
+    DATE = d.strftime("%Y%m%d")
+else:
+    DATE = DATE_ENV
+
+RUN = f"{RUN_INT:02d}z"
+RUN_HHMM = f"{RUN_INT:02d}0000"
 BASE = Path("data/gewitter")
 
 BUCKET = "ecmwf-forecasts"
