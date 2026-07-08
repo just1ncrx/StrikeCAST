@@ -159,6 +159,7 @@ def compute_probability(ds2d, lut, interval_hours=1):
     mcpr    = np.clip(ds2d["mcpr"].values,     float(lut["mcpr"].min()),    float(lut["mcpr"].max()))
     rhmean  = np.clip(ds2d["RHmean"].values,   float(lut["meanRH_500-850"].min()), float(lut["meanRH_500-850"].max()))
     mu_li   = np.clip(ds2d["MU_LI"].values,    float(lut["MU_LI"].min()),   float(lut["MU_LI"].max()))
+    
 
     prob = lut["prob_lightning_lt1h"].interp(
         MU_MIXR=("points", mu_mixr.flatten()),
@@ -178,6 +179,17 @@ def compute_probability(ds2d, lut, interval_hours=1):
     stability_weight = np.clip(1.0 - (mu_li_raw - 2.0) / 4.0, 0.0, 1.0)
     prob = prob * stability_weight
 
+
+    # CIN-Guard: starke Kappung dämpft Blitzwahrscheinlichkeit
+    if "CIN" in ds2d:
+        cin_raw = ds2d["CIN"].values
+        cin_weight = np.where(
+            cin_raw >= -15.0,
+            1.0,
+            np.clip(1.0 - ((-cin_raw) - 15.0) / 135.0, 0.0, 1.0)
+        )
+        prob = prob * cin_weight
+
     # Orographie-Maske: NACH LUT und NACH stability_weight
     orog_weight = np.ones_like(prob)
     if "z_sfc" in ds2d:
@@ -196,6 +208,7 @@ def compute_probability(ds2d, lut, interval_hours=1):
         print(f"   mcpr:     min={ds2d['mcpr'].values[high_mask].min():.6f}  max={ds2d['mcpr'].values[high_mask].max():.6f}")
         print(f"   RHmean:   min={ds2d['RHmean'].values[high_mask].min():.1f}  max={ds2d['RHmean'].values[high_mask].max():.1f}")
         print(f"   z_sfc:    min={ds2d['z_sfc'].values[high_mask].min():.0f}  max={ds2d['z_sfc'].values[high_mask].max():.0f}  ← Höhe in m")
+        print(f"   CIN:      min={ds2d['CIN'].values[high_mask].min():.1f}  max={ds2d['CIN'].values[high_mask].max():.1f}")
 
         idx = np.unravel_index(np.argmax(prob), prob.shape)
         print(f"\n   Höchster Wert bei Index {idx}:")
