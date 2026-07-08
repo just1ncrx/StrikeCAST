@@ -11,19 +11,20 @@ from datetime import datetime, timedelta
 # -------------------------------------------------------
 # Konfiguration
 # -------------------------------------------------------
-date = os.getenv("DATE", "20260401")
+date = os.getenv("DATE", "20260708")
 run  = int(os.getenv("RUN", 0))
 
 BASE_DIR   = os.path.join("data", "gewitter")
 OUTPUT_DIR = os.path.join("data", "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-steps_all = list(range(6, 82, 3))   # 6, 9, 12, … 144
+steps_all = list(range(6, 50, 3))   # 6, 9, 12, … 144
 
 g   = 9.80665
 rd  = 287.04
 rv  = 461.50
 eps = rd / rv
+cpd = 1005.7
 
 LAT_MIN, LAT_MAX = 30.0, 72.0
 LON_MIN, LON_MAX = -15.0, 35.0
@@ -136,6 +137,72 @@ def check_files(prev_step, step):
 # -------------------------------------------------------
 # Meteorologische Hilfsfunktionen  (unverändert)
 # -------------------------------------------------------
+def calc_cin(t2m, td2m, sp, t_pl, q_pl, z_pl, levels):
+    """
+    Surface-based CIN [J/kg] via pseudoadiabatischem Parcel-Ascent (Bolton).
+    Vereinfachung: unterhalb LCL wird Buoyancy = 0 gesetzt (wie im ECMWF-Original).
+    CIN wird nur bis zum LFC (erste Schicht mit positiver Buoyancy) aufsummiert.
+    """
+    sp_hPa = sp / 100.0
+    q_sfc  = np.clip(0.622 * es_buck(td2m) / (sp_hPa - es_buck(td2m)), 0.0, 0.06)
+    theta_e_parcel = theta_ep_bolton(t2m, sp_hPa, q_sfc)
+
+    # LCL (Bolton) – Druck
+    e_sfc = es_buck(td2m)
+    T_LCL = 2840.0 / (3.5 * np.log(t2m) - np.log(np.maximum(e_sfc, 1e-9)) - 4.805) + 55.0
+    p_LCL = sp_hPa * (T_LCL / t2m) ** (cpd / rd)   # cpd = 1005.7, ggf. oben ergänzen
+
+    nlev = t_pl.shape[0]
+    Lv = 2.5e6
+    Tv_parcel = np.zeros_like(t_pl)
+
+    # Parcel-Temperatur auf jeder Druckfläche (moist-adiabatisch, theta_e erhalten)
+    for k in range(nlev):
+        p_k = levels[k]
+        T_guess = t_pl[k].copy()
+        for _ in range(6):
+            es_k      = es_buck(T_guess)
+            q_sat_k   = np.clip(0.622 * es_k / (p_k - es_k), 0.0, 0.06)
+            theta_e_g = theta_ep_bolton(T_guess, p_k, q_sat_k)
+            dtheta_dT = theta_e_g / T_guess * (1.0 + Lv * q_sat_k / (rd * T_guess))
+            T_guess   = T_guess + (theta_e_parcel - theta_e_g) / np.maximum(dtheta_dT, 1e-6)
+            T_guess   = np.clip(T_guess, 150.0, 340.0)
+        q_sat_final  = np.clip(0.622 * es_buck(T_guess) / (p_k - es_buck(T_guess)), 0.0, 0.06)
+        Tv_parcel[k] = T_guess * (1.0 + 0.61 * q_sat_final)
+
+    Tv_env   = t_pl * (1.0 + 0.61 * q_pl)
+    buoyancy = Tv_parcel - Tv_env
+
+    # unterhalb LCL: keine Buoyancy (Näherung wie im Original)
+    p_grid   = levels[:, None, None]
+    buoyancy = np.where(p_grid > p_LCL[None, :, :], 0.0, buoyancy)
+
+    # levels sind aufsteigend sortiert (50…1000 hPa), d.h. z_pl[0]=oben, z_pl[-1]=unten
+    # für die Integration von unten nach oben umkehren:
+    buoyancy_b = buoyancy[::-1]
+    z_b        = z_pl[::-1]
+    t_b        = t_pl[::-1]
+
+    dz    = z_b[1:] - z_b[:-1]
+    b_bot = buoyancy_b[:-1]
+    b_top = buoyancy_b[1:]
+    t_bot = t_b[:-1]
+    t_top = t_b[1:]
+
+    d_energy = ((b_bot + b_top) / (t_bot + t_top)) * g * dz
+    dCAPE = np.where(d_energy > 0, d_energy, 0.0)
+    dCIN  = np.where(d_energy < 0, d_energy, 0.0)
+
+    has_lfc   = np.any(dCAPE > 0, axis=0)
+    lfc_level = np.argmax(dCAPE > 0, axis=0)
+
+    level_idx   = np.arange(dCIN.shape[0])[:, None, None]
+    dCIN_masked = np.where(level_idx <= lfc_level[None, :, :], dCIN, 0.0)
+
+    cin = np.where(has_lfc, np.sum(dCIN_masked, axis=0), 0.0)
+    return cin
+
+
 def es_buck(T_K):
     Tc = T_K - 273.16
     return 6.1121 * np.exp((18.678 - Tc / 234.5) * (Tc / (257.14 + Tc)))
@@ -380,7 +447,8 @@ def process_step_pair(prev_step, step):
     mw_13       = calc_mean_wind_1_3km(z_pl, u_pl, v_pl, z_sfc)
     sb_wmax     = np.sqrt(np.maximum(2.0 * mucape, 0.0))
     mu_cape_m10 = np.maximum(mucape * 0.30, 0.0)
-    cin         = np.full_like(t2m, np.nan)
+    cin         = calc_cin(t2m, td2m, sp, t_pl, q_pl, z_pl, levels)
+    print(f"  CIN check → min: {np.nanmin(cin):.2f}  mean: {np.nanmean(cin):.2f}  max: {np.nanmax(cin):.2f}  J/kg")
     srh         = calc_srh(u_pl, v_pl, z_pl, z_sfc, levels, layer_m=3000)
     stp         = calc_stp(mucape, ml_lcl, srh, mu_eff_bs)
     scp         = calc_scp(mucape, mu_eff_bs, srh)
