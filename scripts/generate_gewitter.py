@@ -24,11 +24,11 @@ os.makedirs(OUT_DIR, exist_ok=True)
 
 cities = pd.DataFrame({
     'name': ['Berlin', 'Hamburg', 'München', 'Köln', 'Frankfurt', 'Dresden', 'Stuttgart', 'Düsseldorf',
-             'Nürnberg', 'Erfurt', 'Leipzig', 'Bremen', 'Saarbrücken', 'Hannover'],
+             'Nürnberg', 'Erfurt', 'Leipzig', 'Bremen', 'Saarbrücken', 'Hannover', 'Magdeburg'],
     'lat': [52.52, 53.55, 48.14, 50.94, 50.11, 51.05, 48.78, 51.23,
-            49.45, 50.98, 51.34, 53.08, 49.24, 52.37],
+            49.45, 50.98, 51.34, 53.08, 49.24, 52.37, 52.13],
     'lon': [13.40, 9.99, 11.57, 6.96, 8.68, 13.73, 9.18, 6.78,
-            11.08, 11.03, 12.37, 8.80, 6.99, 9.73]
+            11.08, 11.03, 12.37, 8.80, 6.99, 9.73, 11.62]
 })
 
 EXTENT = [5, 16, 47, 56]
