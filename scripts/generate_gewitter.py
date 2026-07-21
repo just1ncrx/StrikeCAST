@@ -240,12 +240,11 @@ def plot_png(lats, lons, prob, outfile, interval_hours=3,
     from matplotlib.colors import ListedColormap, BoundaryNorm
 
     # --- Diskrete Colormap in 5%-Schritten ---
-    bounds = [0, 1, 2, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 60, 70, 80, 90, 100]
+    bounds = [0,1,2,5,10,20,30,40,50,60,70,80,90,95,98,100]
     colors = [
-        "#151515","#5FF7C6","#4CC74B","#40C50C","#4CAA4C",
-        "#BDEB4B","#E9E94B","#FFDA4B","#FFB74B","#FF934B",
-        "#FF714D","#FF4D4D","#DB4D4C","#B74C70","#9B4CA7",
-        "#BC4CD2","#E9BCFF","#F3D2FF" 
+        "#056B6F","#079833","#08B015","#40C50C","#7DD608",
+        "#9BE105","#BBEA04","#DBF402","#FFF600","#FEDC00",
+        "#FFAD00","#FF6300","#E50014","#BC0035","#930058","#660179"
     ]
     cmap = ListedColormap(colors)
     norm = BoundaryNorm(bounds, cmap.N)
