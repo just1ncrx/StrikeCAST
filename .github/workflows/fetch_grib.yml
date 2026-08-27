@@ -115,6 +115,7 @@ jobs:
       - name: Generate metadata
         run: |
           python scripts/generate_metadata.py \
+            pngs/ \
             ${{ needs.strikecast.outputs.run }} \
             ${{ needs.strikecast.outputs.date }}
 
