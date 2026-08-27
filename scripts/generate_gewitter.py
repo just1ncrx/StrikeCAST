@@ -16,7 +16,7 @@ from matplotlib.colors import ListedColormap, BoundaryNorm
 
 PRED_DIR = "data/output"
 LUT_PATH = "data/lut/lightning_lut.nc"
-OUT_DIR  = "webp/gewitter"
+OUT_DIR  = "pngs/gewitter"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # lon_min, lon_max, lat_min, lat_max
