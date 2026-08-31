@@ -121,6 +121,10 @@ jobs:
 
       - name: Clean old runs on R2
         run: |
+          aws configure set default.s3.max_concurrent_requests 2
+          aws configure set default.retry_mode adaptive
+          aws configure set default.max_attempts 5
+          
           CURRENT_RUN="${{ needs.strikecast.outputs.run }}"
           for folder in $(aws s3 ls s3://${{ secrets.R2_BUCKET }}/strikecast/ \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com \
