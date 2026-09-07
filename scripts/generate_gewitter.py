@@ -120,29 +120,6 @@ def compute_probability(ds2d, lut, interval_hours=1):
     prob = np.nan_to_num(prob, nan=0.0)
     prob = np.clip(prob, 0.0, 1.0)
 
-    # Physikalischer Guard: stabiles LI -> Wahrscheinlichkeit dämpfen
-    mu_li_raw = ds2d["MU_LI"].values
-    stability_weight = np.clip(1.0 - (mu_li_raw - 2.0) / 4.0, 0.0, 1.0)
-    prob = prob * stability_weight
-
-    # CIN-Guard: starke Kappung dämpft Blitzwahrscheinlichkeit
-    if "CIN" in ds2d:
-        cin_raw = ds2d["CIN"].values
-        cin_weight = np.where(
-            cin_raw >= -15.0,
-            1.0,
-            np.clip(1.0 - ((-cin_raw) - 15.0) / 135.0, 0.0, 1.0)
-        )
-        prob = prob * cin_weight
-
-    # Orographie-Maske: NACH LUT und NACH stability_weight
-    orog_weight = np.ones_like(prob)
-    if "z_sfc" in ds2d:
-        z = ds2d["z_sfc"].values
-        z_max = maximum_filter(z, size=2, mode="nearest")
-        orog_weight = np.clip(1.0 - (z_max - 800.0) / 700.0, 0.0, 1.0)
-    prob = prob * orog_weight
-
     # --- Debug: Ausreißer diagnostizieren ---
     high_mask = prob > 0.5
     if high_mask.any():
