@@ -443,7 +443,7 @@ def main():
         germany_data = crop_to_germany(prob_merc)          # row0 = Süden
         # 0% -> NaN, damit "kein Signal" im Chunk transparent/fehlend ist
         # statt als echter Wert 0 codiert zu werden.
-        germany_data = np.where(germany_data <= 0, np.nan, germany_data)
+        germany_data = np.where(germany_data < 1, np.nan, germany_data)
         embed_data_chunk(outfile, germany_data[::-1], GERMANY_CROP_EXTENT_3857, QUANTUM_STEP)  # row0 = Norden
 
         print(f"  → {outfile}  (run={run_label}, interval={interval_hours}h)")
