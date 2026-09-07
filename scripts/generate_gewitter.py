@@ -4,6 +4,8 @@ import os
 import glob
 import re
 import gc
+import struct
+import zlib
 from zoneinfo import ZoneInfo
 
 import numpy as np
@@ -23,6 +25,18 @@ os.makedirs(OUT_DIR, exist_ok=True)
 EXTENT = [-3.94, 20.34, 43.18, 58.08]
 TZ_DE = ZoneInfo("Europe/Berlin")
 
+# ------------------------------
+# Bounding Box fuer den eingebetteten DVAL-Chunk - hier reicht
+# Deutschland + etwas Rand fuer Grenzregionen beim Hovern; das Farbbild
+# selbst bleibt unveraendert auf der vollen Domaene.
+# ------------------------------
+GERMANY_BBOX_LONLAT = [5.5, 15.3, 47.0, 55.3]  # lon_min, lon_max, lat_min, lat_max
+
+# Rasterschritt in Prozentpunkten fuer den eingebetteten DVAL-Chunk -
+# ganze Prozent, keine Nachkommastelle.
+QUANTUM_STEP = 1  # %
+NAN_SENTINEL_I16 = -32768
+DVAL_FOURCC = b"DVAL"
 
 
 # -------------------------------------------------------
@@ -217,6 +231,36 @@ _dom_x_min, _dom_y_min = lonlat_to_webmercator(EXTENT[0], EXTENT[2])
 _dom_x_max, _dom_y_max = lonlat_to_webmercator(EXTENT[1], EXTENT[3])
 DOMAIN_EXTENT_3857 = [float(_dom_x_min), float(_dom_y_min), float(_dom_x_max), float(_dom_y_max)]
 
+# Gleiches Ziel-Pixelraster wie in warp_equirect_to_webmercator (muss mit
+# WEBMERCATOR_WIDTH uebereinstimmen, damit die Indizes exakt passen) -
+# einmalig ausserhalb der Schleife berechnet, da pro Lauf identisch.
+_full_x_new, _full_y_new = webmercator_target_grid(EXTENT, out_width=WEBMERCATOR_WIDTH)
+
+_gbx_min, _gby_min = lonlat_to_webmercator(GERMANY_BBOX_LONLAT[0], GERMANY_BBOX_LONLAT[2])
+_gbx_max, _gby_max = lonlat_to_webmercator(GERMANY_BBOX_LONLAT[1], GERMANY_BBOX_LONLAT[3])
+
+# Indizes im vollen Raster, die die Bbox gerade so umschliessen (lieber
+# ein Pixel zu viel als zu wenig - daher aussen aufrunden statt clippen).
+_col_i0 = max(0, np.searchsorted(_full_x_new, _gbx_min, side="left") - 1)
+_col_i1 = min(len(_full_x_new) - 1, np.searchsorted(_full_x_new, _gbx_max, side="right"))
+_row_i0 = max(0, np.searchsorted(_full_y_new, _gby_min, side="left") - 1)
+_row_i1 = min(len(_full_y_new) - 1, np.searchsorted(_full_y_new, _gby_max, side="right"))
+
+# Exakte Mercator-Extent des zugeschnittenen Rasters (= tatsaechliche
+# Gitterpunkte an den Raendern, nicht die rohe Bbox - damit die
+# Ruecktransformation im Frontend pixelgenau bleibt).
+GERMANY_CROP_EXTENT_3857 = [
+    float(_full_x_new[_col_i0]), float(_full_y_new[_row_i0]),
+    float(_full_x_new[_col_i1]), float(_full_y_new[_row_i1]),
+]
+
+
+def crop_to_germany(data_south_first):
+    """data_south_first: 2D-Array wie von warp_equirect_to_webmercator
+    zurückgegeben (row0 = Süden, aufsteigend in Mercator-Y wie
+    _full_y_new). Schneidet auf die Deutschland-Bbox zu."""
+    return data_south_first[_row_i0:_row_i1 + 1, _col_i0:_col_i1 + 1]
+
 
 def data_to_rgba(data, cmap, norm):
     """Wandelt ein 2D-Datenarray in ein RGBA-uint8-Array um.
@@ -232,6 +276,54 @@ def save_transparent_webp(data, cmap, norm, out_path):
     rgba = data_to_rgba(data, cmap, norm)
     img = Image.fromarray(rgba[::-1, :, :], mode="RGBA")
     img.save(out_path, format="WEBP", lossless=True, method=4)
+
+
+def embed_data_chunk(webp_path, data, extent_3857, quantum, fourcc=DVAL_FOURCC):
+    """Hängt ein rohes Datenfeld als privaten, int16-quantisierten RIFF-Chunk
+    an ein WebP an.
+
+    data: 2D-Array (float), row0 = Norden (also bereits wie fürs Bild
+          gespiegelt).
+    extent_3857: [x_min, y_min, x_max, y_max] in Web-Mercator-Metern -
+                 exakt das Raster, auf dem `data` liegt.
+    quantum: Rasterschritt in den Originaleinheiten (hier: Prozentpunkte).
+    """
+    height, width = data.shape
+
+    nan_mask = ~np.isfinite(data)
+    data_filled = np.where(nan_mask, 0.0, data)  # verhindert NaN->int Warnung beim Runden/Casten
+    quant = np.round(data_filled / quantum)
+    # Sicherheitsclip: verhindert einen int16-Überlauf bei extremen
+    # Ausreißern, ohne das eigentlich zulässige Wertespektrum (0-100%)
+    # einzuschränken.
+    quant = np.clip(quant, -32767, 32767).astype(np.int16)
+    quant[nan_mask] = NAN_SENTINEL_I16
+
+    header = struct.pack("<BBII", 2, 1, width, height)
+    header += struct.pack("<4d", *extent_3857)
+    header += struct.pack("<d", quantum)
+    compressed = zlib.compress(np.ascontiguousarray(quant, dtype="<i2").tobytes(), level=9)
+    payload = header + compressed
+
+    size = len(payload)
+    chunk = fourcc + struct.pack("<I", size) + payload
+    if size % 2 == 1:
+        chunk += b"\x00"  # RIFF-Padding auf gerade Länge, zählt nicht zu size
+
+    with open(webp_path, "rb") as f:
+        content = f.read()
+
+    if content[0:4] != b"RIFF" or content[8:12] != b"WEBP":
+        raise ValueError(f"{webp_path} ist keine gültige WebP-Datei (RIFF/WEBP-Header fehlt)")
+
+    riff_size = struct.unpack("<I", content[4:8])[0]
+    new_riff_size = riff_size + len(chunk)
+
+    with open(webp_path, "wb") as f:
+        f.write(content[:4])
+        f.write(struct.pack("<I", new_riff_size))
+        f.write(content[8:])
+        f.write(chunk)
 
 
 # -------------------------------------------------------
@@ -342,6 +434,18 @@ def main():
         outfile = os.path.join(OUT_DIR, outname)
 
         save_transparent_webp(prob_merc, prob_colors, prob_norm, outfile)
+
+        # Zusaetzlich die echten Wahrscheinlichkeitswerte (0-100%, nicht
+        # die Farben) als privaten RIFF-Chunk direkt ins WebP einbetten -
+        # row0 = Norden, damit der Chunk 1:1 zur Bildorientierung passt
+        # (das Bild wird in save_transparent_webp beim Speichern
+        # gespiegelt, prob_merc selbst hat row0 = Sueden).
+        germany_data = crop_to_germany(prob_merc)          # row0 = Süden
+        # 0% -> NaN, damit "kein Signal" im Chunk transparent/fehlend ist
+        # statt als echter Wert 0 codiert zu werden.
+        germany_data = np.where(germany_data <= 0, np.nan, germany_data)
+        embed_data_chunk(outfile, germany_data[::-1], GERMANY_CROP_EXTENT_3857, QUANTUM_STEP)  # row0 = Norden
+
         print(f"  → {outfile}  (run={run_label}, interval={interval_hours}h)")
 
         ds.close()
