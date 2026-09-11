@@ -1,12 +1,23 @@
+# AWS / Cloud Services
 boto3
+
+# Numerical Computing
 numpy
+scipy
+
+# Data Handling & Analysis
+pandas
 xarray
+
+# Plotting & Visualization
 matplotlib
 cartopy
-pandas
-scipy
+Pillow
+
+# Weather & Meteorological Data
 ecmwf-opendata
+
+# GRIB / NetCDF Data Processing
 eccodes
 cfgrib
 netCDF4
-Pillow
