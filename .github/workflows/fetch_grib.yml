@@ -38,8 +38,8 @@ jobs:
         run: |
           HOUR=$(date -u +%H)
           case $HOUR in
-            07|08|09|10|12) RUN=00 ;;
-            13|14|15|16) RUN=06 ;;
+            07|08|09|10) RUN=00 ;;
+            12|13|14|15) RUN=06 ;;
             19|20|21|22) RUN=12 ;;
             00|01|02|03|04) RUN=18 ;;
           esac
@@ -79,6 +79,7 @@ jobs:
           mkdir -p pngs/gewitter pngs/scp
           python scripts/generate_gewitter.py &
           python scripts/generate_supercell.py
+          wait
 
       - name: Upload PNGs artifact
         uses: actions/upload-artifact@v6
@@ -146,6 +147,10 @@ jobs:
           RUN="${{ needs.strikecast.outputs.run }}"
           aws s3 sync pngs/gewitter/ \
             s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/gewitter/ \
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+
+          aws s3 sync pngs/scp/ \
+            s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/supercell/ \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
           aws s3 cp pngs/metadata.json \
