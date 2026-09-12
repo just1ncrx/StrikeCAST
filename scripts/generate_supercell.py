@@ -7,7 +7,6 @@ import gc
 import struct
 import zlib
 from zoneinfo import ZoneInfo
-
 import numpy as np
 import xarray as xr
 import pandas as pd
@@ -16,7 +15,7 @@ from scipy.interpolate import RegularGridInterpolator
 from matplotlib.colors import ListedColormap, BoundaryNorm
 
 PRED_DIR = "data/output"
-OUT_DIR  = "pngs/supercell"
+OUT_DIR  = "pngs/scp"
 os.makedirs(OUT_DIR, exist_ok=True)
 
 # lon_min, lon_max, lat_min, lat_max - gleiche volle Domäne wie beim
