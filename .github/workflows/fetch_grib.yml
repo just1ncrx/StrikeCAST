@@ -76,8 +76,9 @@ jobs:
 
       - name: Generate PNGs
         run: |
-          mkdir -p pngs/gewitter 
-          python scripts/generate_gewitter.py
+          mkdir -p pngs/gewitter pngs/scp
+          python scripts/generate_gewitter.py &
+          python scripts/generate_supercell.py
 
       - name: Upload PNGs artifact
         uses: actions/upload-artifact@v6
