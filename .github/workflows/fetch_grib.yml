@@ -150,7 +150,7 @@ jobs:
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
           aws s3 sync pngs/scp/ \
-            s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/supercell/ \
+            s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/scp/ \
             --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
 
           aws s3 cp pngs/metadata.json \
