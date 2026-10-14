@@ -123,9 +123,10 @@ jobs:
 
       - name: Rohdateien mit gzip komprimieren
         run: |
-          find pngs/${{ needs.strikecast.outputs.run }} -type f | while read -r f; do
-            gzip -9 -n -c "$f" > "$f.tmp" && mv "$f.tmp" "$f"
-          done
+          find pngs/gewitter pngs/scp -type f -name '*.png' -print0 |
+            while IFS= read -r -d '' f; do
+              gzip -9 -n -c "$f" > "$f.tmp" && mv "$f.tmp" "$f"
+            done
 
       - name: Clean old runs on R2
         run: |
