@@ -1,46 +1,49 @@
 #!/usr/bin/env python3
+"""
+StrikeCAST - Gewitterwahrscheinlichkeit als uint8-Binärraster (wie ICON-D2).
+
+Ausgabe: bin/gewitter/gewitter_<YYYYMMDD>_<HHMM>   (ohne Endung, 1215x746 Bytes,
+         row0 = Norden, 0..254 = Wert, 255 = NoData, Zeit = Ende des Intervalls
+         in deutscher Ortszeit)
+"""
 
 import os
 import glob
 import re
 import gc
-import struct
-import zlib
 from zoneinfo import ZoneInfo
 
 import numpy as np
 import xarray as xr
 import pandas as pd
-from PIL import Image
-from scipy.ndimage import maximum_filter, gaussian_filter
+from scipy.ndimage import gaussian_filter
 from scipy.interpolate import RegularGridInterpolator
-from matplotlib.colors import ListedColormap, BoundaryNorm
 
+from encoding_config import ENCODING, GRID, encode_uint8
+
+VAR_TYPE = "gewitter"
 PRED_DIR = "data/output"
 LUT_PATH = "data/lut/lightning_lut.nc"
 OUT_DIR  = "pngs/gewitter"
 os.makedirs(OUT_DIR, exist_ok=True)
 
-# lon_min, lon_max, lat_min, lat_max
-EXTENT = [-3.94, 20.34, 43.18, 58.08]
 TZ_DE = ZoneInfo("Europe/Berlin")
+enc = ENCODING[VAR_TYPE]
 
 # ------------------------------
-# Bounding Box fuer den eingebetteten DVAL-Chunk - hier reicht
-# Deutschland + etwas Rand fuer Grenzregionen beim Hovern; das Farbbild
-# selbst bleibt unveraendert auf der vollen Domaene.
+# Zielraster (= ICON-D2-Raster), Süd -> Nord aufsteigend
 # ------------------------------
-GERMANY_BBOX_LONLAT = [5.5, 15.3, 47.0, 55.3]  # lon_min, lon_max, lat_min, lat_max
+LON_MIN, LAT_MIN, LON_MAX, LAT_MAX = GRID["extent"]
+WIDTH, HEIGHT = GRID["width"], GRID["height"]
+TARGET_LON = np.linspace(LON_MIN, LON_MAX, WIDTH)
+TARGET_LAT = np.linspace(LAT_MIN, LAT_MAX, HEIGHT)
+GRID_STEP_DEG = (LON_MAX - LON_MIN) / (WIDTH - 1)   # 0.02°
 
-# Rasterschritt in Prozentpunkten fuer den eingebetteten DVAL-Chunk -
-# ganze Prozent, keine Nachkommastelle.
-QUANTUM_STEP = 1  # %
-NAN_SENTINEL_I16 = -32768
-DVAL_FOURCC = b"DVAL"
+SMOOTH_KM = 40.0   # Gauß-Glättung (wie bisher)
 
 
 # -------------------------------------------------------
-# Zeit-Hilfsfunktionen (unverändert)
+# Zeit-Hilfsfunktionen
 # -------------------------------------------------------
 
 def _to_de_local(ts):
@@ -48,12 +51,6 @@ def _to_de_local(ts):
     if t.tzinfo is None:
         t = t.tz_localize("UTC")
     return t.tz_convert(TZ_DE)
-
-
-def format_de_datetime(ts):
-    """Datum und Uhrzeit in deutscher Ortszeit (ohne Zeitzonen-Label)."""
-    t = _to_de_local(ts)
-    return f"{t:%d.%m.%Y %H:%M}"
 
 
 # -------------------------------------------------------
@@ -64,7 +61,7 @@ lut = xr.open_dataset(LUT_PATH)
 
 
 # -------------------------------------------------------
-# Run-Label aus NC holen (ohne Datums-Parsing) - unverändert
+# Run-Label aus NC holen (nur fürs Logging)
 # -------------------------------------------------------
 
 def extract_run_label(ds):
@@ -142,191 +139,31 @@ def compute_probability(ds2d, lut, interval_hours=1):
 
 
 # -------------------------------------------------------
-# Diskrete Colormap in 5%-Schritten (unverändert)
+# ECMWF-Gitter (0.25°) -> ICON-D2-Raster (0.02°)
 # -------------------------------------------------------
 
-bounds = [0,1,2,5,10,20,30,40,50,60,70,80,90,95,98,100]
-colors = [
-    "#056B6F","#079833","#08B015","#40C50C","#7DD608",
-    "#9BE105","#BBEA04","#DBF402","#FFF600","#FEDC00",
-    "#FFAD00","#FF6300","#E50014","#BC0035","#930058","#660179"
-]
-prob_colors = ListedColormap(colors)
-prob_norm = BoundaryNorm(bounds, prob_colors.N)
+def regrid_to_icon_grid(data, lat_1d, lon_1d):
+    """data: 2D (lat, lon), lat/lon aufsteigend.
+    Bilinear auf das feste Zielraster. Zielpixel außerhalb des
+    ECMWF-Ausschnitts (schmaler Randstreifen) werden per Randwert gefüllt
+    (nötig für die Glättung) und über die zurückgegebene Maske
+    'outside' später auf NaN (= NoData) gesetzt."""
+    lat_c = np.clip(TARGET_LAT, lat_1d[0], lat_1d[-1])
+    lon_c = np.clip(TARGET_LON, lon_1d[0], lon_1d[-1])
+
+    interp = RegularGridInterpolator((lat_1d, lon_1d), data, method="linear")
+    pts = np.stack(np.meshgrid(lat_c, lon_c, indexing="ij"), axis=-1)
+    out = interp(pts)
+
+    outside = (((TARGET_LAT < lat_1d[0]) | (TARGET_LAT > lat_1d[-1]))[:, None]
+               | ((TARGET_LON < lon_1d[0]) | (TARGET_LON > lon_1d[-1]))[None, :])
+    return out, outside
 
 
-# -------------------------------------------------------
-# EPSG:4326 -> EPSG:3857 (Web Mercator) - wie in Dokument 2
-# -------------------------------------------------------
-
-EARTH_RADIUS = 6378137.0  # Meter, WGS84/Web-Mercator-Kugelradius
-WEBMERCATOR_WIDTH = 1024  # Ziel-Bildbreite in Pixeln für die Reprojektion
-
-
-def lonlat_to_webmercator(lon_deg, lat_deg):
-    x = EARTH_RADIUS * np.radians(lon_deg)
-    y = EARTH_RADIUS * np.log(np.tan(np.pi / 4 + np.radians(lat_deg) / 2))
-    return x, y
-
-
-def webmercator_target_grid(extent, out_width=WEBMERCATOR_WIDTH):
-    lon_min, lon_max, lat_min, lat_max = extent
-    x_min, y_min = lonlat_to_webmercator(lon_min, lat_min)
-    x_max, y_max = lonlat_to_webmercator(lon_max, lat_max)
-    aspect = (y_max - y_min) / (x_max - x_min)
-    out_height = max(int(round(out_width * aspect)), 1)
-    x_new = np.linspace(x_min, x_max, out_width)
-    y_new = np.linspace(y_min, y_max, out_height)  # aufsteigend: Süd -> Nord
-    return x_new, y_new
-
-
-def warp_equirect_to_webmercator(data, lon, lat, extent, method="linear",
-                                  out_width=WEBMERCATOR_WIDTH):
-    """data/lon/lat: reguläres EPSG:4326-Gitter, lon und lat aufsteigend
-    sortiert. Gibt das Datenfeld auf einem regulären EPSG:3857-Pixelraster
-    zurück (ebenfalls Süd -> Nord aufsteigend)."""
-    x_new, y_new = webmercator_target_grid(extent, out_width=out_width)
-    xx, yy = np.meshgrid(x_new, y_new)
-    lon_grid = np.degrees(xx / EARTH_RADIUS)
-    lat_grid = np.degrees(2 * np.arctan(np.exp(yy / EARTH_RADIUS)) - np.pi / 2)
-
-    interp_func = RegularGridInterpolator(
-        (lat, lon), data,
-        method=method,
-        bounds_error=False,
-        fill_value=np.nan
-    )
-    pts = np.array([lat_grid.ravel(), lon_grid.ravel()]).T
-    warped = interp_func(pts).reshape(lat_grid.shape)
-    return warped
-
-
-# Feste Kartendomäne einmalig nach EPSG:3857 (Meter) umgerechnet - das ist
-# der "imageExtent", den OpenLayers'/Leaflets Image-Overlay-Quelle direkt
-# in Kartenkoordinaten erwartet.
-_dom_x_min, _dom_y_min = lonlat_to_webmercator(EXTENT[0], EXTENT[2])
-_dom_x_max, _dom_y_max = lonlat_to_webmercator(EXTENT[1], EXTENT[3])
-DOMAIN_EXTENT_3857 = [float(_dom_x_min), float(_dom_y_min), float(_dom_x_max), float(_dom_y_max)]
-
-# Gleiches Ziel-Pixelraster wie in warp_equirect_to_webmercator (muss mit
-# WEBMERCATOR_WIDTH uebereinstimmen, damit die Indizes exakt passen) -
-# einmalig ausserhalb der Schleife berechnet, da pro Lauf identisch.
-_full_x_new, _full_y_new = webmercator_target_grid(EXTENT, out_width=WEBMERCATOR_WIDTH)
-
-_gbx_min, _gby_min = lonlat_to_webmercator(GERMANY_BBOX_LONLAT[0], GERMANY_BBOX_LONLAT[2])
-_gbx_max, _gby_max = lonlat_to_webmercator(GERMANY_BBOX_LONLAT[1], GERMANY_BBOX_LONLAT[3])
-
-# Indizes im vollen Raster, die die Bbox gerade so umschliessen (lieber
-# ein Pixel zu viel als zu wenig - daher aussen aufrunden statt clippen).
-_col_i0 = max(0, np.searchsorted(_full_x_new, _gbx_min, side="left") - 1)
-_col_i1 = min(len(_full_x_new) - 1, np.searchsorted(_full_x_new, _gbx_max, side="right"))
-_row_i0 = max(0, np.searchsorted(_full_y_new, _gby_min, side="left") - 1)
-_row_i1 = min(len(_full_y_new) - 1, np.searchsorted(_full_y_new, _gby_max, side="right"))
-
-# Exakte Mercator-Extent des zugeschnittenen Rasters (= tatsaechliche
-# Gitterpunkte an den Raendern, nicht die rohe Bbox - damit die
-# Ruecktransformation im Frontend pixelgenau bleibt).
-GERMANY_CROP_EXTENT_3857 = [
-    float(_full_x_new[_col_i0]), float(_full_y_new[_row_i0]),
-    float(_full_x_new[_col_i1]), float(_full_y_new[_row_i1]),
-]
-
-
-def crop_to_germany(data_south_first):
-    """data_south_first: 2D-Array wie von warp_equirect_to_webmercator
-    zurückgegeben (row0 = Süden, aufsteigend in Mercator-Y wie
-    _full_y_new). Schneidet auf die Deutschland-Bbox zu."""
-    return data_south_first[_row_i0:_row_i1 + 1, _col_i0:_col_i1 + 1]
-
-
-def data_to_rgba(data, cmap, norm):
-    """Wandelt ein 2D-Datenarray in ein RGBA-uint8-Array um.
-    NaN-Werte werden komplett transparent."""
-    rgba = cmap(norm(data))  # float RGBA in [0,1], shape (H,W,4)
-    rgba = (rgba * 255).astype(np.uint8)
-    nan_mask = ~np.isfinite(data)
-    rgba[nan_mask, 3] = 0
-    return rgba
-
-
-def save_transparent_webp(data, cmap, norm, out_path):
-    rgba = data_to_rgba(data, cmap, norm)
-    img = Image.fromarray(rgba[::-1, :, :], mode="RGBA")
-    img.save(out_path, format="WEBP", lossless=True, method=4)
-
-
-def embed_data_chunk(webp_path, data, extent_3857, quantum, fourcc=DVAL_FOURCC):
-    """Hängt ein rohes Datenfeld als privaten, int16-quantisierten RIFF-Chunk
-    an ein WebP an.
-
-    data: 2D-Array (float), row0 = Norden (also bereits wie fürs Bild
-          gespiegelt).
-    extent_3857: [x_min, y_min, x_max, y_max] in Web-Mercator-Metern -
-                 exakt das Raster, auf dem `data` liegt.
-    quantum: Rasterschritt in den Originaleinheiten (hier: Prozentpunkte).
-    """
-    height, width = data.shape
-
-    nan_mask = ~np.isfinite(data)
-    data_filled = np.where(nan_mask, 0.0, data)  # verhindert NaN->int Warnung beim Runden/Casten
-    quant = np.round(data_filled / quantum)
-    # Sicherheitsclip: verhindert einen int16-Überlauf bei extremen
-    # Ausreißern, ohne das eigentlich zulässige Wertespektrum (0-100%)
-    # einzuschränken.
-    quant = np.clip(quant, -32767, 32767).astype(np.int16)
-    quant[nan_mask] = NAN_SENTINEL_I16
-
-    header = struct.pack("<BBII", 2, 1, width, height)
-    header += struct.pack("<4d", *extent_3857)
-    header += struct.pack("<d", quantum)
-    compressed = zlib.compress(np.ascontiguousarray(quant, dtype="<i2").tobytes(), level=9)
-    payload = header + compressed
-
-    size = len(payload)
-    chunk = fourcc + struct.pack("<I", size) + payload
-    if size % 2 == 1:
-        chunk += b"\x00"  # RIFF-Padding auf gerade Länge, zählt nicht zu size
-
-    with open(webp_path, "rb") as f:
-        content = f.read()
-
-    if content[0:4] != b"RIFF" or content[8:12] != b"WEBP":
-        raise ValueError(f"{webp_path} ist keine gültige WebP-Datei (RIFF/WEBP-Header fehlt)")
-
-    riff_size = struct.unpack("<I", content[4:8])[0]
-    new_riff_size = riff_size + len(chunk)
-
-    with open(webp_path, "wb") as f:
-        f.write(content[:4])
-        f.write(struct.pack("<I", new_riff_size))
-        f.write(content[8:])
-        f.write(chunk)
-
-
-# -------------------------------------------------------
-# Glättung auf ein feineres Gitter (wie zuvor im Matplotlib-Plot,
-# nur ohne die Kartendarstellung selbst)
-# -------------------------------------------------------
-
-def smooth_probability(lat_1d, lon_1d, prob, target_res=0.01, smooth_km=40.0):
-    """lat_1d, lon_1d: aufsteigend sortierte 1D-Koordinaten.
-    prob: 2D-Array (lat, lon). Gibt (lat_fine, lon_fine, prob_fine) zurück."""
-    lon_new = np.arange(lon_1d.min(), lon_1d.max() + target_res, target_res)
-    lat_new = np.arange(lat_1d.min(), lat_1d.max() + target_res, target_res)
-    lon2d_new, lat2d_new = np.meshgrid(lon_new, lat_new)
-
-    interp = RegularGridInterpolator(
-        (lat_1d, lon_1d), prob, method="linear", bounds_error=False, fill_value=0.0
-    )
-    prob_fine = interp((lat2d_new, lon2d_new))
-    prob_fine = np.clip(prob_fine, 0.0, 100.0)
-
-    km_per_pixel = target_res * 111.0
-    sigma_px = smooth_km / km_per_pixel
+def smooth_probability(prob_fine, smooth_km=SMOOTH_KM):
+    sigma_px = smooth_km / (GRID_STEP_DEG * 111.0)
     prob_fine = gaussian_filter(prob_fine, sigma=sigma_px, mode="nearest")
-    prob_fine = np.clip(prob_fine, 0.0, 100.0)
-
-    return lat_new, lon_new, prob_fine
+    return np.clip(prob_fine, 0.0, 100.0)
 
 
 # -------------------------------------------------------
@@ -345,14 +182,11 @@ def main():
         lats = ds["latitude"].values
         lons = ds["longitude"].values
 
-        lat_idx = np.where((lats >= EXTENT[2]) & (lats <= EXTENT[3]))[0]
-        lon_idx = np.where((lons >= EXTENT[0]) & (lons <= EXTENT[1]))[0]
+        lat_idx = np.where((lats >= LAT_MIN) & (lats <= LAT_MAX))[0]
+        lon_idx = np.where((lons >= LON_MIN) & (lons <= LON_MAX))[0]
         lat_1d = lats[lat_idx]
         lon_1d = lons[lon_idx]
 
-        # sicherstellen, dass beide Achsen aufsteigend sortiert sind,
-        # da RegularGridInterpolator (in warp_equirect_to_webmercator und
-        # smooth_probability) das voraussetzt
         lat_order = np.argsort(lat_1d)
         lon_order = np.argsort(lon_1d)
         lat_1d = lat_1d[lat_order]
@@ -374,8 +208,7 @@ def main():
             ds_start = ds.isel(time=0, drop=True)
             ds_start = ds_start.isel(latitude=lat_idx, longitude=lon_idx)
             prob = compute_probability(ds_start, lut, interval_hours=interval_hours)
-            valid_from = pd.Timestamp(prev_time)
-            valid_to   = pd.Timestamp(step_time)
+            valid_to = pd.Timestamp(step_time)
 
         else:
             interval_hours = int(ds.attrs.get("interval_hours", 3))
@@ -383,50 +216,38 @@ def main():
             ds_start = ds_start.isel(latitude=lat_idx, longitude=lon_idx)
             prob = compute_probability(ds_start, lut, interval_hours=interval_hours)
 
-            time_val = ds["time"].values[0] if "time" in ds.dims else None
-
-            if time_val is not None:
-                valid_from = pd.Timestamp(time_val)
-                valid_to   = valid_from + pd.Timedelta(hours=interval_hours)
+            if "time" in ds.dims:
+                valid_to = pd.Timestamp(ds["time"].values[0]) + pd.Timedelta(hours=interval_hours)
             else:
-                valid_from = valid_to = None
+                valid_to = None
 
         print(f"  prob: min={prob.min():.1f}%  max={prob.max():.1f}%  mean={prob.mean():.1f}%")
 
-        # --- Glättung auf feineres Gitter ---
-        lat_fine, lon_fine, prob_fine = smooth_probability(lat_1d, lon_1d, prob)
+        if valid_to is None:
+            print(f"  ⚠️  {f}: keine Zeitinformation -> übersprungen")
+            ds.close()
+            continue
 
+        # --- 0.25° -> 0.02° (ICON-D2-Raster), glätten, Rand = NoData ---
+        prob_fine, outside = regrid_to_icon_grid(prob, lat_1d, lon_1d)
+        prob_fine = np.clip(prob_fine, 0.0, 100.0)
+        prob_fine = smooth_probability(prob_fine)
+        prob_fine[outside] = np.nan
 
-        # --- Nach EPSG:3857 (Web Mercator) umprojizieren ---
-        prob_merc = warp_equirect_to_webmercator(
-            prob_fine, lon_fine, lat_fine, EXTENT, method="linear"
-        )
+        # --- row0 = Norden, nach uint8 quantisieren ---
+        q = encode_uint8(prob_fine[::-1], enc)
+        assert q.shape == (HEIGHT, WIDTH), q.shape
 
-        # --- Dateiname: gewitter_<Ende des Prognosezeitraums, dt. Ortszeit>.webp ---
-        if valid_to is not None:
-            vt_de = _to_de_local(valid_to)
-            outname = f"gewitter_{vt_de.strftime('%Y%m%d_%H%M')}.webp"
-        else:
-            outname = "gewitter_unknown.webp"
+        # --- Dateiname: gewitter_<Ende des Prognosezeitraums, dt. Ortszeit> ---
+        vt_de = _to_de_local(valid_to)
+        outname = f"{VAR_TYPE}_{vt_de.strftime('%Y%m%d_%H%M')}"
         outfile = os.path.join(OUT_DIR, outname)
+        np.ascontiguousarray(q, dtype=np.uint8).tofile(outfile)
 
-        save_transparent_webp(prob_merc, prob_colors, prob_norm, outfile)
-
-        # Zusaetzlich die echten Wahrscheinlichkeitswerte (0-100%, nicht
-        # die Farben) als privaten RIFF-Chunk direkt ins WebP einbetten -
-        # row0 = Norden, damit der Chunk 1:1 zur Bildorientierung passt
-        # (das Bild wird in save_transparent_webp beim Speichern
-        # gespiegelt, prob_merc selbst hat row0 = Sueden).
-        germany_data = crop_to_germany(prob_merc)          # row0 = Süden
-        # 0% -> NaN, damit "kein Signal" im Chunk transparent/fehlend ist
-        # statt als echter Wert 0 codiert zu werden.
-        germany_data = np.where(germany_data < 1, np.nan, germany_data)
-        embed_data_chunk(outfile, germany_data[::-1], GERMANY_CROP_EXTENT_3857, QUANTUM_STEP)  # row0 = Norden
-
-        print(f"  → {outfile}  (run={run_label}, interval={interval_hours}h)")
+        print(f"  → {outfile}  ({WIDTH}x{HEIGHT}, {q.nbytes} Bytes, run={run_label}, interval={interval_hours}h)")
 
         ds.close()
-        del prob, prob_fine, prob_merc
+        del prob, prob_fine, q
         gc.collect()
 
     print("✅ Fertig!")
