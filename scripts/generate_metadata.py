@@ -78,7 +78,7 @@ def main():
     meta = build_meta(out_dir, run, date)
 
     # metadata.json liegt außerhalb des run-Ordners
-    meta_path = os.path.join(os.path.dirname(os.path.abspath(out_dir)), "metadata.json")
+    meta_path = os.path.join(out_dir, "metadata.json")
     with open(meta_path, "w", encoding="utf-8") as f:
         json.dump(meta, f, ensure_ascii=False, separators=(",", ":"))
 

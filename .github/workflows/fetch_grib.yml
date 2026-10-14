@@ -120,6 +120,7 @@ jobs:
             pngs/ \
             ${{ needs.strikecast.outputs.run }} \
             ${{ needs.strikecast.outputs.date }}
+          ls -la pngs/ metadata.json 2>&1 || true
 
       - name: Rohdateien mit gzip komprimieren
         run: |
