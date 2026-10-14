@@ -123,10 +123,14 @@ jobs:
 
       - name: Rohdateien mit gzip komprimieren
         run: |
+          echo "Vorher:"; du -sh pngs/gewitter pngs/scp
           find pngs/gewitter pngs/scp -type f -print0 |
             while IFS= read -r -d '' f; do
               gzip -9 -n -c "$f" > "$f.tmp" && mv "$f.tmp" "$f"
             done
+          echo "Nachher:"; du -sh pngs/gewitter pngs/scp
+          f=$(find pngs/gewitter -type f | head -1)
+          file "$f"    # sollte "gzip compressed data" zeigen
 
       - name: Clean old runs on R2
         run: |
