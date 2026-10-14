@@ -123,7 +123,7 @@ jobs:
 
       - name: Rohdateien mit gzip komprimieren
         run: |
-          find pngs/gewitter pngs/scp -type f -name '*.png' -print0 |
+          find pngs/gewitter pngs/scp -type f -print0 |
             while IFS= read -r -d '' f; do
               gzip -9 -n -c "$f" > "$f.tmp" && mv "$f.tmp" "$f"
             done
@@ -154,12 +154,12 @@ jobs:
           RUN="${{ needs.strikecast.outputs.run }}"
           aws s3 sync pngs/gewitter/ \
             s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/gewitter/ \
-            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com \
             --content-type application/gzip \
 
           aws s3 sync pngs/scp/ \
             s3://${{ secrets.R2_BUCKET }}/strikecast/$RUN/scp/ \
-            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com
+            --endpoint-url https://${{ secrets.R2_ACCOUNT_ID }}.r2.cloudflarestorage.com \
             --content-type application/gzip \
 
           aws s3 cp pngs/metadata.json \
